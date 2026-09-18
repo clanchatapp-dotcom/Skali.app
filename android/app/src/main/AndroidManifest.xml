@@ -66,7 +66,6 @@
             android:exported="false"
             android:launchMode="singleInstance"
             android:excludeFromRecents="true"
-            android:showOnLockScreen="true"
             android:showWhenLocked="true"
             android:turnScreenOn="true"
             android:theme="@style/AppTheme.NoActionBarLaunch" />
@@ -78,17 +77,23 @@
 
         <!-- Custom FirebaseMessagingService.
              Handles `type=incoming_call` data messages and delegates
-             everything else to Capacitor's default service. The
-             tools:node="replace" is what makes ours win the manifest merge
-             against @capacitor/push-notifications. -->
+             everything else to Capacitor's default. -->
         <service
             android:name=".CallMessagingService"
-            android:exported="false"
-            tools:node="replace">
+            android:exported="false">
             <intent-filter>
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
         </service>
+
+        <!-- Remove Capacitor's own FirebaseMessagingService from the merged
+             manifest: our .CallMessagingService extends it and delegates
+             via super.onMessageReceived / onNewToken, so all normal
+             push-notification behaviour is preserved -- and FCM never has
+             an ambiguous choice between two services. -->
+        <service
+            android:name="com.capacitorjs.plugins.pushnotifications.MessagingService"
+            tools:node="remove" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

@@ -1,4 +1,6 @@
 from fastapi import FastAPI, APIRouter
+from fastapi.responses import FileResponse
+from fastapi import HTTPException
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -51,6 +53,18 @@ async def create_status_check(input: StatusCheckCreate):
 async def get_status_checks():
     status_checks = await db.status_checks.find().to_list(1000)
     return [StatusCheck(**status_check) for status_check in status_checks]
+
+
+@api_router.get("/download/skali-call-full-screen")
+async def download_skali_call_zip():
+    zip_path = Path("/app/deliverables/skali-call-full-screen.zip")
+    if not zip_path.exists():
+        raise HTTPException(404, "File not found")
+    return FileResponse(
+        path=str(zip_path),
+        media_type="application/zip",
+        filename="skali-call-full-screen.zip",
+    )
 
 # Include the router in the main app
 app.include_router(api_router)

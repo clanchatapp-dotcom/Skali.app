@@ -89,23 +89,45 @@ yarn cap:sync
 
 ## 5. Wire the accept event in `App.tsx` (or wherever `CallModal` lives)
 
-Anywhere the CallModal is mounted, listen for the accept event and open the
-modal in answering mode. Minimal example:
+`CallModal.tsx` already auto-connects to LiveKit the moment it mounts (it
+calls `api.livekitToken(room, peer)` in its own `useEffect`), so answering
+from the notification just means **mount the modal and tell the caller we
+accepted**. Add this once, near your existing CallModal state:
 
 ```tsx
+import CallModal from './components/CallModal'
+import { api } from './lib/api'
+
+const [activeCall, setActiveCall] = useState<
+  { room: string; peer: string; media: 'audio' | 'video' } | null
+>(null)
+
 useEffect(() => {
   const onAccept = (e: any) => {
     const { room, peer, media } = e.detail || {}
-    // open your existing CallModal here, e.g.
-    setIncomingCall({ room, peer, media, autoAccept: true })
+    if (!room || !peer) return
+    // Tell the caller we picked up so their UI transitions into the room.
+    api.callAccept(peer, room).catch(() => {})
+    setActiveCall({ room, peer, media: media || 'video' })
   }
   window.addEventListener('skali:incoming-call-accept', onAccept)
   return () => window.removeEventListener('skali:incoming-call-accept', onAccept)
 }, [])
+
+// ...somewhere in your render:
+{activeCall && (
+  <CallModal
+    room={activeCall.room}
+    peer={activeCall.peer}
+    media={activeCall.media}
+    onClose={() => setActiveCall(null)}
+  />
+)}
 ```
 
 Your `IncomingCallScreen.tsx` doesn't need to change — that's still the
-in-app ring UI for when the app is in the foreground.
+in-app ring UI for when the app is in the foreground. `CallModal.tsx`
+doesn't need to change either.
 
 ## 6. Manufacturer background restrictions (unavoidable caveat)
 

@@ -66,6 +66,30 @@ async def download_skali_call_zip():
         filename="skali-call-full-screen.zip",
     )
 
+
+@api_router.get("/download/skali-call-overlay")
+async def download_skali_call_overlay_zip():
+    zip_path = Path("/app/deliverables/skali-call-full-screen-repo-overlay.zip")
+    if not zip_path.exists():
+        raise HTTPException(404, "File not found")
+    return FileResponse(
+        path=str(zip_path),
+        media_type="application/zip",
+        filename="skali-call-full-screen-repo-overlay.zip",
+    )
+
+
+@api_router.get("/download/skali-call-patch")
+async def download_skali_call_patch():
+    patch_path = Path("/app/deliverables/0001-feat-android-full-screen-incoming-call.patch")
+    if not patch_path.exists():
+        raise HTTPException(404, "File not found")
+    return FileResponse(
+        path=str(patch_path),
+        media_type="text/x-patch",
+        filename="0001-feat-android-full-screen-incoming-call.patch",
+    )
+
 # Include the router in the main app
 app.include_router(api_router)
 

@@ -47,6 +47,13 @@ dependencies {
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation "androidx.core:core:$androidxCoreVersion"
     implementation project(':capacitor-android')
+
+    // Needed by CallMessagingService: extends FirebaseMessagingService and uses
+    // RemoteMessage. @capacitor/push-notifications brings firebase-messaging in
+    // transitively as `implementation`, so its classes aren't on the app's
+    // compile classpath -- pin the same version explicitly here.
+    implementation 'com.google.firebase:firebase-messaging:24.1.0'
+
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"

@@ -1,0 +1,27 @@
+{
+  "summary": "Frontend-only smoke test of Skali rebrand + Web Google OAuth entry point. App loads without white screen or fatal JS errors. Login page renders 'Continue with Google' button (1 match). Clicking it initiated Supabase OAuth (https://ixahrtibbpjruggivjik.supabase.co/auth/v1/authorize?provider=google&...) which redirected to Google accounts (accounts.google.com) with the expected client_id 572913753788-il245hv6t2tss0bc097c4jfk4cumpii8.apps.googleusercontent.com and redirect_uri https://ixahrtibbpjruggivjik.supabase.co/auth/v1/callback. Email/password inputs accept text. Only console noise is benign React Router v7 future-flag warnings.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "External-only: Google Cloud console still needs the Android OAuth client for native flow (out of scope here).",
+    "Optional: Add data-testid attributes on the Google button, email/password inputs, submit button for future automated testing.",
+    "Optional: Opt-in to React Router v7 future flags (v7_startTransition, v7_relativeSplatPath) to silence warnings."
+  ],
+  "critical_code_review_comments": [
+    "Web sign-in entry wiring in src/pages/Login.tsx correctly calls supabase.auth.signInWithOAuth({provider:'google'}) — verified live: redirect URL and Supabase project match src/lib/supabase.ts (ixahrtibbpjruggivjik).",
+    "No data-testid on auth-critical elements; recommend adding for future regression tests."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a", "frontend": "100%"},
+  "test_credentials": "Not required; real Google login was intentionally not completed.",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Skali web Google OAuth entry point verified working end-to-end up to Google's sign-in page. Post-click URL captured: accounts.google.com/v3/signin/identifier?...client_id=572913753788-il245hv6t2tss0bc097c4jfk4cumpii8...redirect_uri=https://ixahrtibbpjruggivjik.supabase.co/auth/v1/callback. Supabase authorize URL: https://ixahrtibbpjruggivjik.supabase.co/auth/v1/authorize?provider=google&redirect_to=https://gif-troubleshoot-1.preview.emergentagent.com/auth/callback. Any remaining 'Google sign in isn't working' reports are on Android/native path (Google Cloud console Android OAuth client missing) — cannot be tested from browser.",
+  "rca of the issue": "User-reported bug is in the NATIVE Android Google sign-in flow (needs Android OAuth client configured in Google Cloud console). WEB flow via Supabase is intact — no code regression from the ClanChat->Skali rebrand or Supabase/OAuth client switch."
+}

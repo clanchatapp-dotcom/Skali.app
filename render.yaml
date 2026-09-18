@@ -1,0 +1,65 @@
+# Skali — Render Blueprint (web deploy)
+# Backend = FastAPI web service, Frontend = static Vite SPA.
+# Secrets (sync:false) must be filled in the Render dashboard; NEVER commit real values.
+services:
+  # ---------------- Backend (FastAPI) ----------------
+  - type: web
+    name: clanchat-backend
+    runtime: python
+    rootDir: backend
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/
+    envVars:
+      - key: MONGO_URL          # MongoDB Atlas URI (Render has no built-in Mongo)
+        sync: false
+      - key: DB_NAME
+        value: skali
+      - key: SUPABASE_URL
+        value: https://ixahrtibbpjruggivjik.supabase.co
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml4YWhydGliYnBqcnVnZ2l2amlrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4OTQwMjY2MywiZXhwIjoyMTA0OTc4NjYzfQ.03XAPWqJsqGhgYzgSvu9BA5fzGTeXmbgKvL5JxV5SUg
+      - key: SUPABASE_JWT_SECRET
+        value: 16c061bc-d447-4978-bfb0-3f12200f8ebf
+      - key: SUPABASE_BUCKET
+        value: skali-media
+      - key: DM_ENC_KEY         # base64 32-byte key; keep STABLE or old DMs won't decrypt
+        sync: false
+      - key: LIVEKIT_URL
+        sync: false
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
+      - key: ADMIN_EMAILS       # comma-separated admin emails (your Google email)
+        sync: false
+      - key: FIREBASE_CREDENTIALS_JSON  # Firebase Admin service-account JSON (single line) for server-side FCM push
+        sync: false
+      - key: FRONTEND_ORIGIN
+        value: https://clanchatapp.onrender.com
+      - key: GIPHY_API_KEY        # GIPHY developer API key (server-side GIF search proxy)
+        sync: false
+
+  # ---------------- Frontend (static Vite SPA) ----------------
+  - type: web
+    name: clanchat-web
+    runtime: static
+    buildCommand: yarn install && yarn build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite       # SPA: send all paths to index.html for react-router
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: REACT_APP_SUPABASE_URL
+        value: https://ixahrtibbpjruggivjik.supabase.co
+      - key: REACT_APP_SUPABASE_ANON_KEY
+        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml4YWhydGliYnBqcnVnZ2l2amlrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk0MDI2NjMsImV4cCI6MjEwNDk3ODY2M30.4yKosj4HuCrPp5Rw[...]
+      - key: REACT_APP_GOOGLE_WEB_CLIENT_ID
+        # Web OAuth client in the SAME Google Cloud project (skaliapp-e0dee) as the
+        # Android client. Must match nativeGoogle.ts + the android-apk.yml default,
+        # otherwise native Google sign-in throws [16] "reauth failed".
+        value: 572913753788-il245hv6t2tss0bc097c4jfk4cumpii8.apps.googleusercontent.com
+      - key: REACT_APP_API_URL   # absolute backend URL (e.g. https://clanchat-backend.onrender.com)
+        sync: false

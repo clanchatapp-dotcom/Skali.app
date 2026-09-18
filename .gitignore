@@ -31,7 +31,6 @@ dist/
 dist
 
 # Environment files (comprehensive coverage)
-
 *token.json*
 *credentials.json*
 
@@ -79,4 +78,31 @@ agenthub/agents/youtube/db
 memory/test_credentials.md
 
 # Mobile development
-android-sdk/
+android-sdk/node_modules/@next/swc-linux-arm64-gnu/next-swc.linux-arm64-gnu.node
+node_modules/@next/swc-linux-arm64-musl/next-swc.linux-arm64-musl.node
+node_modules/@next/swc-linux-arm64-gnu/next-swc.linux-arm64-gnu.node
+
+# secrets & keystores (NEVER commit)
+.env
+.env.*
+*.env
+!.env.example
+*.keystore
+debug.keystore
+# Exception: this DEBUG keystore is intentionally committed so the Google sign-in SHA-1 stays STABLE across builds. (Release keystores must still never be committed.)
+!android/app/debug.keystore
+credentials.json
+*.key
+.credentials
+
+# Android (Capacitor): commit the project, ignore generated/machine-specific & built assets
+android/.gradle/
+android/build/
+android/app/build/
+android/.idea/
+android/local.properties
+android/capacitor-cordova-android-plugins/
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+*.apk
+*.aab

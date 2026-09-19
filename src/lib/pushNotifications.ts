@@ -1,107 +1,158 @@
-// Drop-in replacement for src/lib/pushNotifications.ts
+// src/lib/pushNotifications.ts
 //
-// What changed vs your current file:
-//   1. After the FCM token is delivered to the backend, we also stash the
-//      user's auth token + API base URL in Android SharedPreferences. The
-//      native CallActionReceiver reads those to call /api/call/decline
-//      while the app is out.
-//   2. On cold start & resume we look for the `skali://call?...` deep link
-//      that IncomingCallActivity fires when the user answers, and route the
-//      SPA straight into the call room.
+// Fix 3:
+//   - The call-accept handoff (reading the MainActivity intent extras that
+//     IncomingCallActivity wrote) is now registered at bootstrap via
+//     bootstrapCallHandoff(), which runs unconditionally before any React
+//     tree mounts.  configurePush() is still called from Layout on mount,
+//     but it no longer owns the cold-start accept path.
 //
-// Nothing else about your notification handling has changed.
+//   - A tiny CallAcceptBus buffers a cold-start accept event so that even
+//     if Layout hasn't mounted yet, the event is replayed the moment
+//     Layout registers its listener.
+//
+// Fix 2 (companion):
+//   IncomingCallActivity no longer fires a skali:// URI deep link.
+//   Instead it puts plain extras on the MainActivity intent:
+//     skali_call_action = "accept"
+//     room / from_handle / media / call_id
+//   The Capacitor Bridge exposes these via window.__SKALI_CALL_EXTRAS__
+//   (injected by MainActivity.java, see companion fix there), and we read
+//   them here at bootstrap time.
 
 import { Capacitor, registerPlugin } from '@capacitor/core'
-import { App as CapApp } from '@capacitor/app'
-import { api } from './api'
-import { supabase } from './supabase'
+import { App as CapApp }             from '@capacitor/app'
+import { Preferences }               from '@capacitor/preferences'
+import { api }                       from './api'
+import { supabase }                  from './supabase'
 
-// A super-tiny Capacitor plugin that Just Writes To SharedPreferences.
-// The Java side is a standard Capacitor Preferences read; we're using the
-// bundled @capacitor/preferences plugin for the write.
-import { Preferences } from '@capacitor/preferences'
+// ---------------------------------------------------------------------------
+// CallAcceptBus  –  tiny pub/sub that buffers one event across mount timing
+// ---------------------------------------------------------------------------
+type CallAcceptDetail = { room: string; peer: string; media: 'audio' | 'video' }
 
-let configured = false
+const CallAcceptBus = (() => {
+  let _buffered: CallAcceptDetail | null = null
+  let _listener: ((d: CallAcceptDetail) => void) | null = null
 
-// -----------------------------------------------------------------------------
-// Persist auth + API base in a way the native decline receiver can read.
-// -----------------------------------------------------------------------------
+  return {
+    /** Called by bootstrap or deep-link handler when a cold-start accept arrives */
+    emit(detail: CallAcceptDetail) {
+      if (_listener) {
+        _listener(detail)
+      } else {
+        _buffered = detail           // Layout hasn't mounted yet — buffer it
+      }
+    },
+    /** Called by Layout on mount; replays buffered event immediately if any */
+    subscribe(fn: (d: CallAcceptDetail) => void) {
+      _listener = fn
+      if (_buffered) {
+        fn(_buffered)
+        _buffered = null
+      }
+      return () => { _listener = null }
+    },
+  }
+})()
+
+export { CallAcceptBus }
+
+// ---------------------------------------------------------------------------
+// Persist auth + API base so the native decline receiver can call the API
+// ---------------------------------------------------------------------------
 async function persistCallAuth() {
   try {
-    // API base URL (must match what the app already uses at runtime).
-    // Prefer the same value your api.ts uses; falling back to VITE env.
     const apiBase =
       (import.meta as any).env?.VITE_API_URL ||
-      (window as any).__SKALI_API_BASE__ ||
+      (window as any).__SKALI_API_BASE__       ||
       window.location.origin
 
-    // Current Supabase JWT (short-lived). Native side will use it verbatim.
     const { data } = await supabase.auth.getSession()
     const token = data?.session?.access_token || ''
 
-    // @capacitor/preferences uses SharedPreferences under the hood on Android.
-    // The receiver reads `skali_call_prefs` -> {api_base_url, auth_token},
-    // so we must write to that named group.
     await Preferences.configure({ group: 'skali_call_prefs' })
     await Preferences.set({ key: 'api_base_url', value: apiBase })
-    await Preferences.set({ key: 'auth_token',   value: token })
-  } catch {
-    /* best effort */
-  }
+    await Preferences.set({ key: 'auth_token',   value: token  })
+  } catch { /* best effort */ }
 }
 
-// Re-persist whenever the session changes (login / refresh / logout).
 supabase.auth.onAuthStateChange(() => { persistCallAuth() })
 
-// -----------------------------------------------------------------------------
-// Deep link from the full-screen incoming-call banner (Accept button).
-// -----------------------------------------------------------------------------
-function routeCallDeepLink(url: string) {
+// ---------------------------------------------------------------------------
+// Read intent extras that IncomingCallActivity put on the MainActivity intent.
+// MainActivity.java injects them as window.__SKALI_CALL_EXTRAS__ before the
+// WebView is created (see companion MainActivity fix).
+// ---------------------------------------------------------------------------
+function readIntentExtras(): CallAcceptDetail | null {
   try {
-    const u = new URL(url)
-    if (u.protocol !== 'skali:' || u.hostname !== 'call') return
-    const room  = u.searchParams.get('room')   || ''
-    const peer  = u.searchParams.get('peer')   || ''
-    const media = u.searchParams.get('media')  || 'video'
-    if (!room || !peer) return
-    // App.tsx listens for this and opens the CallModal in "answering" mode.
-    window.dispatchEvent(new CustomEvent('skali:incoming-call-accept', {
-      detail: { room, peer, media },
-    }))
-  } catch { /* ignore malformed */ }
+    const extras = (window as any).__SKALI_CALL_EXTRAS__
+    if (!extras || extras.skali_call_action !== 'accept') return null
+    const room  = extras.room        as string
+    const peer  = extras.from_handle as string
+    const media = (extras.media || 'video') as 'audio' | 'video'
+    if (!room || !peer) return null
+    return { room, peer, media }
+  } catch { return null }
 }
+
+// ---------------------------------------------------------------------------
+// bootstrapCallHandoff  –  must run at app startup, before Layout mounts.
+// Called from main.tsx (or App.tsx) once, unconditionally.
+// ---------------------------------------------------------------------------
+let _bootstrapped = false
+
+export function bootstrapCallHandoff() {
+  if (_bootstrapped) return
+  _bootstrapped = true
+
+  if (Capacitor.getPlatform() !== 'android') return
+
+  // 1. Cold-start: MainActivity was launched by IncomingCallActivity with extras
+  const fromExtras = readIntentExtras()
+  if (fromExtras) {
+    CallAcceptBus.emit(fromExtras)
+  }
+
+  // 2. Warm: app resumed via appUrlOpen (kept for forward-compat / PWA mode)
+  CapApp.addListener('appUrlOpen', ({ url }) => {
+    try {
+      const u = new URL(url)
+      if (u.protocol !== 'skali:' || u.hostname !== 'call') return
+      const room  = u.searchParams.get('room')  || ''
+      const peer  = u.searchParams.get('peer')  || ''
+      const media = (u.searchParams.get('media') || 'video') as 'audio' | 'video'
+      if (!room || !peer) return
+      CallAcceptBus.emit({ room, peer, media })
+    } catch { /* ignore */ }
+  })
+}
+
+// ---------------------------------------------------------------------------
+// configurePush  –  called from Layout after mount (needs user context)
+// ---------------------------------------------------------------------------
+let configured = false
 
 export async function configurePush() {
   if (configured) return
   if (Capacitor.getPlatform() !== 'android') return
   configured = true
 
-  // Persist auth ASAP so a call landing seconds later can still be declined.
   persistCallAuth()
-
-  // Cold-start deep link: IncomingCallActivity launched us with skali://call?...
-  try {
-    const launch = await CapApp.getLaunchUrl()
-    if (launch?.url) routeCallDeepLink(launch.url)
-  } catch { /* ignore */ }
-
-  // Warm deep links (app was already backgrounded when Accept was tapped).
-  CapApp.addListener('appUrlOpen', ({ url }) => routeCallDeepLink(url))
 
   try {
     const { PushNotifications } = await import('@capacitor/push-notifications')
 
-    // Non-call channel (existing behaviour).
     try {
       await PushNotifications.createChannel({
-        id: 'high_priority',
-        name: 'Messages & Calls',
+        id:          'high_priority',
+        name:        'Messages & Calls',
         description: 'Instant alerts for new messages, media and calls',
-        importance: 5,
-        visibility: 1,
-        sound: 'default',
-        vibration: true,
-        lights: true,
+        importance:  5,
+        visibility:  1,
+        sound:       'default',
+        vibration:   true,
+        lights:      true,
       })
     } catch { /* ignore */ }
 
@@ -111,13 +162,10 @@ export async function configurePush() {
 
     await PushNotifications.addListener('registration', async (token) => {
       api.registerPush(token.value, 'android').catch(() => {})
-      // Make sure the receiver has fresh creds the moment FCM is ready.
       persistCallAuth()
     })
-    await PushNotifications.addListener('registrationError', () => {})
-    await PushNotifications.addListener('pushNotificationReceived', () => {
-      // App is in the foreground — the badge poller already refreshes counts.
-    })
+    await PushNotifications.addListener('registrationError',           () => {})
+    await PushNotifications.addListener('pushNotificationReceived',    () => {})
     await PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
       const data: any = action?.notification?.data || {}
       if (data?.url) { try { window.location.hash = data.url } catch { /* ignore */ } }

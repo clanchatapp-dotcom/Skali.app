@@ -48,15 +48,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Custom deep link used by IncomingCallActivity when the user
-                 accepts a call from the notification / full-screen banner. -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="skali" android:host="call" />
-            </intent-filter>
-
         </activity>
 
         <!-- Full-screen incoming-call screen: shown over the lock screen and

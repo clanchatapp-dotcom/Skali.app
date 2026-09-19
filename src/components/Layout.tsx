@@ -26,6 +26,7 @@ import {
   getToken,
   wsUserUrl
 } from '../lib/api'
+import { configurePush, CallAcceptBus } from '../lib/pushNotifications'
 import { Avatar } from '../lib/ui'
 import OnboardingTour from './OnboardingTour'
 import CallModal from './CallModal'
@@ -295,26 +296,23 @@ export default function Layout() {
   }
 
   // When the native full-screen incoming-call banner (Android) fires
-  // its "Answer" action, IncomingCallActivity deep-links back into the
-  // app via skali://call?... and pushNotifications.ts converts that
-  // into this window event. All we do here is tell the caller we
-  // picked up and open the LiveKit room -- same as tapping Accept
-  // on the in-app ring.
+  // its "Answer" action, IncomingCallActivity puts extras on the
+  // MainActivity intent. bootstrapCallHandoff() (called before this
+  // component mounts) reads those extras and emits to CallAcceptBus.
+  // We subscribe here; any buffered cold-start event is replayed
+  // immediately on subscribe.
   useEffect(() => {
-    const onNativeAccept = (e: Event) => {
-      const detail = (e as CustomEvent).detail || {}
-      const room = detail.room as string | undefined
-      const peer = detail.peer as string | undefined
-      const media = (detail.media as 'audio' | 'video') || 'video'
-      if (!room || !peer) return
-
+    const unsub = CallAcceptBus.subscribe(({ room, peer, media }) => {
       setIncoming(null)
       api.callAccept(peer, room).catch(() => {})
       setActiveCall(cur => cur ?? { room, peer, media })
       nav('/messages')
-    }
-    window.addEventListener('skali:incoming-call-accept', onNativeAccept)
-    return () => window.removeEventListener('skali:incoming-call-accept', onNativeAccept)
+    })
+
+    // Also wire up push notifications now that the user context is live.
+    configurePush()
+
+    return unsub
   }, [nav])
 
   const linkCls = (

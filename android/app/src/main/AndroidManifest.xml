@@ -89,7 +89,7 @@
         <!-- Remove Capacitor's own FirebaseMessagingService from the merged
              manifest: our .CallMessagingService extends it and delegates
              via super.onMessageReceived / onNewToken, so all normal
-             push-notification behaviour is preserved -- and FCM never has
+             push-notification behaviour is preserved, and FCM never has
              an ambiguous choice between two services. -->
         <service
             android:name="com.capacitorjs.plugins.pushnotifications.MessagingService"

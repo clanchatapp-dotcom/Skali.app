@@ -8,6 +8,8 @@ import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginHandle;
 
+import org.json.JSONObject;
+
 import ee.forgr.capacitor.social.login.GoogleProvider;
 import ee.forgr.capacitor.social.login.SocialLoginPlugin;
 import ee.forgr.capacitor.social.login.ModifiedMainActivityForSocialLoginPlugin;
@@ -31,7 +33,62 @@ public class MainActivity extends BridgeActivity
         registerPlugin(CallAudioPlugin.class);
 
         super.onCreate(savedInstanceState);
+
+        // Inject call-accept extras into the WebView so that
+        // bootstrapCallHandoff() in pushNotifications.ts can read them
+        // on a cold start (when IncomingCallActivity launched us).
+        // Must run after super.onCreate() so getBridge().getWebView() exists.
+        injectCallExtras(getIntent());
     }
+
+    /**
+     * Called when IncomingCallActivity re-launches us via
+     * FLAG_ACTIVITY_SINGLE_TOP while we are already running (warm start).
+     */
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        injectCallExtras(intent);
+    }
+
+    /**
+     * If the intent carries a skali_call_action extra (written by
+     * IncomingCallActivity.acceptCall), serialise all the call extras as a
+     * JSON object and inject it as window.__SKALI_CALL_EXTRAS__ in the
+     * WebView.  The JS side reads this synchronously at bootstrap, before
+     * any React component mounts.
+     */
+    private void injectCallExtras(Intent intent) {
+        if (intent == null) return;
+        if (!"accept".equals(intent.getStringExtra("skali_call_action"))) return;
+
+        try {
+            JSONObject obj = new JSONObject();
+            obj.put("skali_call_action", "accept");
+            obj.put("room",        safeStr(intent, "room"));
+            obj.put("from_handle", safeStr(intent, "from_handle"));
+            obj.put("media",       safeStr(intent, "media"));
+            obj.put("call_id",     safeStr(intent, "call_id"));
+
+            String js = "window.__SKALI_CALL_EXTRAS__ = " + obj.toString() + ";";
+
+            // evaluateJavascript runs on the UI thread; the WebView is already
+            // created by the time onCreate/onNewIntent reaches this point.
+            getBridge().getWebView().post(() ->
+                getBridge().getWebView().evaluateJavascript(js, null)
+            );
+        } catch (Exception e) {
+            Log.w("MainActivity", "injectCallExtras failed: " + e.getMessage());
+        }
+    }
+
+    private String safeStr(Intent intent, String key) {
+        String v = intent.getStringExtra(key);
+        return v != null ? v : "";
+    }
+
+    // -----------------------------------------------------------------------
 
     @Override
     public void onActivityResult(
@@ -80,4 +137,4 @@ public class MainActivity extends BridgeActivity
     @Override
     public void IHaveModifiedTheMainActivityForTheUseWithSocialLoginPlugin() {
     }
-        }
+}

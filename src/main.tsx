@@ -7,6 +7,7 @@ import { AuthProvider } from './lib/auth'
 import { initGoogle } from './lib/nativeGoogle'
 import { initStatusBar } from './lib/statusBar'
 import { warmup } from './lib/api'
+import { bootstrapCallHandoff } from './lib/pushNotifications'
 import './index.css'
 
 initGoogle().catch(() => {})
@@ -14,6 +15,10 @@ initStatusBar().catch(() => {})
 // Kick the backend awake the instant the app's JS loads (before React/auth even
 // mounts), so a cold Render instance is already booting while the UI paints.
 warmup()
+// Must run before any React component mounts so a cold-start call accept
+// (MainActivity launched by IncomingCallActivity) is buffered in CallAcceptBus
+// and replayed the instant Layout subscribes.
+bootstrapCallHandoff()
 
 // Visible fallback so a startup crash (bad config, JS error) is never a silent
 // black screen — critical for the Android WebView where there's no dev console.

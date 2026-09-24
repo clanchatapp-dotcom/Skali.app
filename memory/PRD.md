@@ -84,6 +84,18 @@ Capacitor (web/Android) frontend, FastAPI (Python 3.11) + MongoDB (Motor) backen
 - **P2 — Block 5**: discovery + tag registry + NSFW closed selector + Choices + sponsored posts.
 - **P2 — Block 6**: Hive moderation, E2E (Signal), live streaming, iOS full build, appeals, PhotoDNA.
 
+## Implemented (session 3) — Block 4 Creator Hub + Verified badges ✅ (2026-09-24)
+- **Creator Hub** (`src/pages/CreatorHub.tsx`, route `/creator`, linked from Settings; gated by `monetisation_enabled`):
+  Overview (`/api/creator/overview`), Subscribers (`/api/creator/subscribers`), Shop (digital + Printful physical:
+  `/api/creator/shop`, `/api/creator/shop/products`, `/api/shop/order/{id}`), Finance (totals, CSV export
+  `/api/creator/finance/export.csv`, monthly tax statements issued by Skali `/api/creator/finance/tax-docs`),
+  Payouts (`/api/creator/payout-settings`, `/api/creator/payouts`, `/api/creator/payouts/request` — KYC on first payout).
+  Every endpoint requires verification. Creator Health DEFERRED.
+- **Verified badges (blue tick)**: serializers expose `verified` = identity-checked; `AccountBadge` renders a blue
+  BadgeCheck on feed authors, profiles, wall, DM info. Staff/tier badges to be reworked later.
+- Verified: 20/20 local + 14/14 independent tests (iteration_3.json). Vite production build passes.
+
+
 ## Next tasks
 1. Owner: rotate secrets + set Render env + kick off Yoti/OneID + CCBill applications (long lead).
 2. Block 2 — verification spine (one block per session).

@@ -144,7 +144,7 @@ export default function Profile() {
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5 flex-wrap">
                 <h1 className="text-base sm:text-lg font-extrabold leading-tight truncate max-w-full">#{p.handle}</h1>
-                <AccountBadge type={p.account_type} role={p.role} size={14} />
+                <AccountBadge type={p.account_type} role={p.role} verified={p.verified} size={14} />
               </div>
               <div className="text-sm sm:text-base text-slate-300 font-medium leading-tight whitespace-normal break-words">{p.display_name}</div>
               {/* X-style follower/following counts — compact and never overlapping */}
@@ -282,7 +282,7 @@ function WallTab({ handle }: { handle: string }) {
             <div className="flex items-center gap-2">
               <Link to={`/u/${w.author?.handle}`} className="font-semibold hover:underline">{w.author?.display_name}</Link>
               <RoleBadge role={w.author?.role} size={15} />
-              <AccountBadge type={w.author?.account_type} role={w.author?.role} size={14} />
+              <AccountBadge type={w.author?.account_type} role={w.author?.role} verified={w.author?.verified} size={14} />
               <span className="text-xs text-slate-500">{timeAgo(w.created_at)}</span>
               {w.can_delete && (
                 <button onClick={() => remove(w.id)} className="ml-auto text-slate-500 hover:text-rose-400"><Trash2 className="h-4 w-4" /></button>

@@ -143,7 +143,7 @@ export default function ConversationInfo() {
                 {peer.nickname || peer.display_name}
               </span>
               <RoleBadge role={peer.role} size={16} />
-              <AccountBadge type={peer.account_type} role={peer.role} size={15} />
+              <AccountBadge type={peer.account_type} role={peer.role} verified={(peer as any).verified} size={15} />
             </div>
             <div className="text-sm text-slate-500">#{peer.handle}</div>
 

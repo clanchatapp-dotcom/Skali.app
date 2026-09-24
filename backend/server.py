@@ -18,7 +18,7 @@ from fastapi import (
     WebSocket, WebSocketDisconnect,
 )
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -460,6 +460,7 @@ async def hidden_author_ids(viewer: str) -> set:
 async def relation_slim(prof: dict) -> dict:
     return {'id': prof['id'], 'handle': prof['handle'], 'display_name': prof['display_name'],
             'avatar_url': prof.get('avatar_url'), 'account_type': acct_type(prof),
+            'verified': is_identity_verified(prof),
             'role': effective_role(prof)}
 
 async def can_view(viewer: str, post: dict) -> bool:
@@ -520,6 +521,7 @@ async def public_profile(prof: dict, viewer_id: str) -> dict:
         'bio': prof.get('bio', ''), 'links': prof.get('links', []),
         'avatar_url': prof.get('avatar_url'), 'account_type': acct_type(prof),
         'role': effective_role(prof),
+        'verified': is_identity_verified(prof),
         'creator_safety_flag': bool(prof.get('creator_safety_flag')),
         'follow_mode': prof.get('follow_mode', 'open'), 'dm_open': prof.get('dm_open', True),
         'is_self': is_self,
@@ -622,6 +624,7 @@ async def post_out(p: dict, viewer_id: str) -> dict:
         'author': {'id': author['id'], 'handle': author['handle'],
                    'display_name': author['display_name'], 'avatar_url': author.get('avatar_url'),
                    'account_type': acct_type(author),
+                   'verified': is_identity_verified(author),
                    'role': effective_role(author)} if author else None,
         'is_mine': p['author_id'] == viewer_id,
     }
@@ -3858,7 +3861,7 @@ XSOLLA_WEBHOOK_SECRET = os.environ.get('XSOLLA_WEBHOOK_SECRET', '')
 CCBILL_WEBHOOK_SECRET = os.environ.get('CCBILL_WEBHOOK_SECRET', '')
 
 # Skali platform fee rates (charged on NET ex-VAT).
-SKALI_FEE_RATES = {'premium': 1.0, 'inner_circle': 0.10, 'tip': 0.075}
+SKALI_FEE_RATES = {'premium': 1.0, 'inner_circle': 0.10, 'tip': 0.075, 'shop': 0.10}
 # Approximate PSP processing rates (fraction of gross, borne by the creator).
 PSP_RATES = {'stripe': 0.029, 'xsolla': 0.05, 'ccbill': 0.109, 'segpay': 0.109, 'paxum': 0.05}
 # Paid Inner Circle price caps (monthly, GBP, VAT-inclusive).
@@ -4012,8 +4015,21 @@ async def _fulfil_checkout(session_id: str, psp: str) -> dict:
         return {'ok': True, 'already': True}
     product, buyer, creator = s['product'], s['buyer_id'], s.get('creator_id')
     wf = s.get('quote') or compute_waterfall(s['gross'], s.get('vat_rate', 0.20), product, psp)
-    etype = 'premium' if product == 'premium' else ('inner_circle' if product == 'inner_circle' else 'tip')
-    if product != 'tip':
+    if product == 'shop':
+        # Digital download unlocks an entitlement; physical creates a Printful order.
+        kind = s.get('shop_kind', 'digital')
+        prod = await db.shop_products.find_one({'id': s.get('shop_product_id')}, {'_id': 0})
+        if kind == 'digital':
+            await _grant_entitlement(buyer, 'download', s.get('shop_product_id'), psp, creator, period_days=0)
+        await db.shop_orders.insert_one({
+            'id': str(uuid.uuid4()), 'creator_id': creator, 'buyer_id': buyer,
+            'product_id': s.get('shop_product_id'), 'title': (prod or {}).get('title'),
+            'kind': kind, 'gross': s['gross'], 'psp': psp,
+            'download_url': (prod or {}).get('download_url') if kind == 'digital' else None,
+            'fulfilment_status': 'delivered' if kind == 'digital' else 'printful_submitted',
+            'created_at': datetime.now(timezone.utc).isoformat()})
+    elif product != 'tip':
+        etype = 'premium' if product == 'premium' else 'inner_circle'
         await _grant_entitlement(buyer, etype, s.get('tier'), psp, creator, period_days=30)
         if product == 'inner_circle':
             await db.subscriptions.update_one(
@@ -4148,4 +4164,270 @@ async def creator_finance(u: dict = Depends(require_monetisation)):
             'pending_payout': round(float(bal.get('pending', 0) or 0), 2),
             'payout_review_flag': bool(bal.get('payout_review_flag')),
             'note': 'Skali is Merchant-of-Record; VAT is remitted by Skali. You keep 90% of net, less processing.'}
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# BLOCK 4 — Creator Hub (Overview · Subscribers · Shop · Finance · Payouts)
+# ═══════════════════════════════════════════════════════════════════════════
+# Built on the Block 3 ledger. Every money line carries gross / VAT / PSP fee /
+# Skali cut / creator net. Earnings are consolidated across ALL PSPs into one
+# ledger. Tax docs are issued by Skali (Merchant-of-Record). Creator Health is
+# DEFERRED (needs an event pipeline) and must never touch strike enforcement.
+
+PAYOUT_SCHEDULES = {'weekly', 'monthly', 'threshold'}
+SHOP_PRODUCT_KINDS = {'digital', 'physical'}  # physical = Printful POD
+
+
+def _month_starts():
+    """(this_month_start_iso, last_month_start_iso) in UTC ISO — for chronological string compares."""
+    now = datetime.now(timezone.utc)
+    this_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    prev_end = this_start - timedelta(seconds=1)
+    last_start = prev_end.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return this_start.isoformat(), last_start.isoformat()
+
+
+async def _payout_doc(creator_id: str) -> dict:
+    return await db.payout_balances.find_one({'creator_id': creator_id}, {'_id': 0}) or {}
+
+
+@app.get('/api/creator/overview')
+async def creator_overview(u: dict = Depends(require_monetisation)):
+    """Overview tab: monthly revenue, new subs, tips, pending payouts, growth vs last month."""
+    this_start, last_start = _month_starts()
+    rev_this = rev_last = tips_this = 0.0
+    new_subs = 0
+    async for t in db.transactions.find({'creator_id': u['id'], 'status': {'$ne': 'chargeback'}}):
+        c = float(t.get('creator_net', 0) or 0)
+        created = t.get('created_at', '')
+        if created >= this_start:
+            rev_this += c
+            if t.get('product') == 'tip':
+                tips_this += c
+            if t.get('product') == 'inner_circle':
+                new_subs += 1
+        elif last_start <= created < this_start:
+            rev_last += c
+    growth = None
+    if rev_last > 0:
+        growth = round(((rev_this - rev_last) / rev_last) * 100, 1)
+    elif rev_this > 0:
+        growth = 100.0
+    bal = await _payout_doc(u['id'])
+    active_subs = await db.subscriptions.count_documents({'creator_id': u['id'], 'status': 'active'})
+    return {
+        'revenue_this_month': round(rev_this, 2),
+        'revenue_last_month': round(rev_last, 2),
+        'growth_pct': growth,
+        'new_subs_this_month': new_subs,
+        'tips_this_month': round(tips_this, 2),
+        'active_subscribers': active_subs,
+        'pending_payout': round(float(bal.get('pending', 0) or 0), 2),
+        'currency': bal.get('currency', 'GBP'),
+    }
+
+
+@app.get('/api/creator/subscribers')
+async def creator_subscribers(u: dict = Depends(require_monetisation)):
+    """Subscribers tab: active count, churn, renewals, discounts + the subscriber list."""
+    this_start, _ = _month_starts()
+    active, churned, renewals = 0, 0, 0
+    subs = []
+    async for s in db.subscriptions.find({'creator_id': u['id']}).sort('updated_at', -1):
+        buyer = await db.profiles.find_one({'id': s['buyer_id']}, {'_id': 0})
+        if s.get('status') == 'active':
+            active += 1
+        if s.get('status') == 'canceled' and (s.get('updated_at', '') >= this_start):
+            churned += 1
+        subs.append({
+            'buyer_handle': buyer['handle'] if buyer else 'unknown',
+            'buyer_name': buyer['display_name'] if buyer else 'Unknown',
+            'tier': s.get('tier'), 'price': s.get('price'), 'psp': s.get('psp'),
+            'status': s.get('status'), 'since': s.get('updated_at'),
+        })
+    async for t in db.transactions.find({'creator_id': u['id'], 'product': 'inner_circle',
+                                         'status': {'$ne': 'chargeback'}, 'created_at': {'$gte': this_start}}):
+        renewals += 1
+    return {'active': active, 'churn_this_month': churned, 'renewals_this_month': renewals,
+            'discounts': 0, 'subscribers': subs}
+
+
+# --------------------------- Shop (Printful POD + digital downloads) ---------------------------
+
+class ShopProduct(BaseModel):
+    title: str
+    kind: str            # digital | physical
+    price: float         # VAT-inclusive
+    description: Optional[str] = ''
+    download_url: Optional[str] = None      # digital goods
+    printful_variant_id: Optional[str] = None  # physical (Printful)
+
+
+@app.post('/api/creator/shop/products')
+async def shop_create_product(body: ShopProduct, u: dict = Depends(require_monetisation)):
+    kind = (body.kind or '').strip().lower()
+    if kind not in SHOP_PRODUCT_KINDS:
+        raise HTTPException(400, 'Invalid product kind (digital | physical)')
+    if not body.title.strip() or float(body.price) <= 0:
+        raise HTTPException(400, 'Title and a positive price are required')
+    doc = {'id': str(uuid.uuid4()), 'creator_id': u['id'], 'title': body.title.strip(),
+           'kind': kind, 'price': round(float(body.price), 2), 'description': (body.description or '')[:500],
+           'download_url': body.download_url if kind == 'digital' else None,
+           'printful_variant_id': body.printful_variant_id if kind == 'physical' else None,
+           'active': True, 'created_at': datetime.now(timezone.utc).isoformat()}
+    await db.shop_products.insert_one(dict(doc))
+    doc.pop('_id', None)
+    return doc
+
+
+@app.delete('/api/creator/shop/products/{product_id}')
+async def shop_delete_product(product_id: str, u: dict = Depends(require_monetisation)):
+    # Soft delete — never destroy data in place.
+    await db.shop_products.update_one({'id': product_id, 'creator_id': u['id']},
+        {'$set': {'active': False, 'deleted_at': datetime.now(timezone.utc).isoformat()}})
+    return {'ok': True}
+
+
+@app.get('/api/creator/shop')
+async def creator_shop(u: dict = Depends(require_monetisation)):
+    """Shop tab: products + orders with Printful fulfilment status. Revenue feeds Finance."""
+    products, orders = [], []
+    async for p in db.shop_products.find({'creator_id': u['id'], 'active': True}, {'_id': 0}).sort('created_at', -1):
+        products.append(p)
+    async for o in db.shop_orders.find({'creator_id': u['id']}, {'_id': 0}).sort('created_at', -1).limit(200):
+        orders.append(o)
+    return {'products': products, 'orders': orders}
+
+
+@app.post('/api/shop/order/{product_id}')
+async def shop_order(product_id: str, u: dict = Depends(get_current_user)):
+    """Buyer purchases a shop product. Creates an off-app checkout session (fulfilled on
+    skaliapp.com). PSP follows the SELLER account's NSFW flag. Digital goods unlock a
+    download entitlement on fulfilment; physical goods create a Printful order."""
+    prod = await db.shop_products.find_one({'id': product_id, 'active': True})
+    if not prod:
+        raise HTTPException(404, 'Product not found')
+    creator = await db.profiles.find_one({'id': prod['creator_id']}, {'_id': 0})
+    if not creator or not monetisation_ok(creator):
+        raise HTTPException(403, 'This shop is not open for orders')
+    psp = route_psp(creator)
+    session_id = str(uuid.uuid4())
+    quote = compute_waterfall(prod['price'], 0.20, 'shop', psp)
+    await db.checkout_sessions.insert_one({
+        'id': session_id, 'buyer_id': u['id'], 'creator_id': creator['id'],
+        'product': 'shop', 'shop_product_id': product_id, 'shop_kind': prod['kind'],
+        'gross': prod['price'], 'psp': psp, 'vat_rate': 0.20, 'quote': quote,
+        'content_class': 'nsfw' if account_is_nsfw(creator) else 'sfw',
+        'status': 'created', 'created_at': datetime.now(timezone.utc).isoformat()})
+    return {'session_id': session_id, 'psp': psp, 'gross': prod['price'], 'currency': 'GBP',
+            'quote': quote, 'checkout_url': f'https://skaliapp.com/checkout?session={session_id}&psp={psp}'}
+
+
+# --------------------------- Finance (payouts, VAT, tax docs, export) ---------------------------
+
+@app.get('/api/creator/finance/export.csv')
+async def creator_finance_csv(u: dict = Depends(require_monetisation)):
+    """CSV export of the consolidated ledger for accounting."""
+    rows = ['date,product,psp,content_class,currency,gross,vat,psp_fee,skali_fee,creator_net,status']
+    async for t in db.transactions.find({'creator_id': u['id']}, {'_id': 0}).sort('created_at', -1):
+        rows.append(','.join(str(x) for x in [
+            t.get('created_at', ''), t.get('product', ''), t.get('psp', ''),
+            t.get('content_class', ''), t.get('currency', 'GBP'), t.get('gross', 0),
+            t.get('vat', 0), t.get('psp_fee', 0), t.get('skali_fee', 0),
+            t.get('creator_net', 0), t.get('status', '')]))
+    return PlainTextResponse('\n'.join(rows), media_type='text/csv',
+        headers={'Content-Disposition': 'attachment; filename="skali-earnings.csv"'})
+
+
+@app.get('/api/creator/finance/tax-docs')
+async def creator_tax_docs(u: dict = Depends(require_monetisation)):
+    """Monthly tax statements issued by Skali (Merchant-of-Record). VAT is remitted by Skali."""
+    by_month: dict[str, dict] = {}
+    async for t in db.transactions.find({'creator_id': u['id'], 'status': {'$ne': 'chargeback'}}):
+        m = (t.get('created_at') or '')[:7]  # YYYY-MM
+        if not m:
+            continue
+        d = by_month.setdefault(m, {'month': m, 'gross': 0.0, 'vat': 0.0, 'skali_fee': 0.0,
+                                    'psp_fee': 0.0, 'creator_net': 0.0})
+        for k in ('gross', 'vat', 'skali_fee', 'psp_fee', 'creator_net'):
+            d[k] = round(d[k] + float(t.get(k, 0) or 0), 2)
+    docs = sorted(by_month.values(), key=lambda x: x['month'], reverse=True)
+    for d in docs:
+        d['issuer'] = 'Skali Ltd (Merchant-of-Record)'
+        d['statement_id'] = f"SKALI-{u['handle'][:6].upper()}-{d['month']}"
+    return {'tax_documents': docs}
+
+
+class PayoutSettings(BaseModel):
+    schedule: Optional[str] = None   # weekly | monthly | threshold
+    currency: Optional[str] = None
+    threshold: Optional[float] = None
+
+
+@app.put('/api/creator/payout-settings')
+async def set_payout_settings(body: PayoutSettings, u: dict = Depends(require_monetisation)):
+    upd = {}
+    if body.schedule:
+        if body.schedule not in PAYOUT_SCHEDULES:
+            raise HTTPException(400, 'Invalid schedule (weekly | monthly | threshold)')
+        upd['schedule'] = body.schedule
+    if body.currency:
+        upd['currency'] = body.currency.upper()[:3]
+    if body.threshold is not None:
+        upd['threshold'] = round(float(body.threshold), 2)
+    if upd:
+        upd['updated_at'] = datetime.now(timezone.utc).isoformat()
+        await db.payout_balances.update_one({'creator_id': u['id']}, {'$set': upd}, upsert=True)
+    return await _payout_doc(u['id'])
+
+
+@app.get('/api/creator/payouts')
+async def creator_payouts(u: dict = Depends(require_monetisation)):
+    bal = await _payout_doc(u['id'])
+    history = []
+    async for p in db.payouts.find({'creator_id': u['id']}, {'_id': 0}).sort('created_at', -1).limit(100):
+        history.append(p)
+    return {
+        'pending': round(float(bal.get('pending', 0) or 0), 2),
+        'available': round(float(bal.get('available', 0) or 0), 2),
+        'paid': round(float(bal.get('paid', 0) or 0), 2),
+        'currency': bal.get('currency', 'GBP'),
+        'schedule': bal.get('schedule', 'monthly'),
+        'threshold': bal.get('threshold'),
+        'payout_kyc': bal.get('payout_kyc') or {'status': 'unverified', 'provider': None},
+        'payout_review_flag': bool(bal.get('payout_review_flag')),
+        'history': history,
+    }
+
+
+@app.post('/api/creator/payouts/request')
+async def request_payout(u: dict = Depends(require_monetisation)):
+    """Request a payout of the pending balance. Payout KYC is triggered HERE (on first
+    payout), not upfront. If KYC isn't verified yet, we hand off to the PSP and return
+    202 without moving money."""
+    bal = await _payout_doc(u['id'])
+    if bal.get('payout_review_flag'):
+        raise HTTPException(403, 'Your account is under review after repeated chargebacks. Payouts are paused.')
+    kyc = bal.get('payout_kyc') or {'status': 'unverified'}
+    if kyc.get('status') != 'verified':
+        psp = route_psp(u)
+        await db.payout_balances.update_one({'creator_id': u['id']},
+            {'$set': {'payout_kyc': {'status': 'pending', 'provider': psp,
+                                     'at': datetime.now(timezone.utc).isoformat()}}}, upsert=True)
+        return JSONResponse(status_code=202, content={
+            'kyc_required': True, 'provider': psp,
+            'kyc_url': f'https://payouts.skaliapp.com/{psp}/kyc?creator={u["handle"]}',
+            'message': 'Complete payout KYC with the processor to receive your first payout.'})
+    amount = round(float(bal.get('pending', 0) or 0), 2)
+    if amount <= 0:
+        raise HTTPException(400, 'No funds available to pay out')
+    payout = {'id': str(uuid.uuid4()), 'creator_id': u['id'], 'amount': amount,
+              'currency': bal.get('currency', 'GBP'), 'status': 'pending', 'psp': route_psp(u),
+              'created_at': datetime.now(timezone.utc).isoformat()}
+    await db.payouts.insert_one(dict(payout))
+    await db.payout_balances.update_one({'creator_id': u['id']},
+        {'$set': {'pending': 0.0}, '$inc': {'paid': amount}})
+    payout.pop('_id', None)
+    return {'ok': True, 'payout': payout}
 

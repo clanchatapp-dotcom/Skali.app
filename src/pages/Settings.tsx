@@ -427,6 +427,9 @@ export default function Settings() {
           <button data-testid="settings-open-verify" onClick={() => nav('/verify')} className="w-full px-3 py-2.5 rounded-xl bg-brand text-white font-semibold text-sm">
             Open verification
           </button>
+          <button data-testid="settings-open-creator" onClick={() => nav('/creator')} className="w-full mt-2 px-3 py-2.5 rounded-xl border border-edge font-semibold text-sm">
+            Open Creator Hub
+          </button>
         </section>
 
         {/* Always-visible: Legal & policies */}

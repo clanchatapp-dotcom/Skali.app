@@ -109,6 +109,17 @@ export const api = {
   // Block 3 — entitlements (read-only) + creator finance
   entitlements: () => req('/entitlements'),
   creatorFinance: () => req('/creator/finance'),
+  // Block 4 — Creator Hub
+  creatorOverview: () => req('/creator/overview'),
+  creatorSubscribers: () => req('/creator/subscribers'),
+  creatorShop: () => req('/creator/shop'),
+  shopCreateProduct: (b: any) => req('/creator/shop/products', { method: 'POST', body: j(b) }),
+  shopDeleteProduct: (id: string) => req(`/creator/shop/products/${id}`, { method: 'DELETE' }),
+  creatorTaxDocs: () => req('/creator/finance/tax-docs'),
+  creatorPayouts: () => req('/creator/payouts'),
+  setPayoutSettings: (b: any) => req('/creator/payout-settings', { method: 'PUT', body: j(b) }),
+  requestPayout: () => req('/creator/payouts/request', { method: 'POST' }),
+  financeCsvUrl: () => `${API_BASE}/api/creator/finance/export.csv`,
   updateProfile: (b: any) => req('/profile', { method: 'PUT', body: j(b) }),
   changeHandle: (handle: string) => req('/profile/handle', { method: 'POST', body: j({ handle }) }),
   setNickname: (handle: string, nickname: string) => req(`/inner/${handle}/nickname`, { method: 'PUT', body: j({ nickname }) }),

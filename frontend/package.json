@@ -1,0 +1,8 @@
+{
+  "name": "skali-frontend-launcher",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "cd /app && exec node_modules/.bin/vite"
+  }
+}

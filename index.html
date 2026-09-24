@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b1020" />
+    <link rel="icon" type="image/png" href="/logo.png" />
+    <link rel="apple-touch-icon" href="/logo.png" />
+    <meta property="og:title" content="Skali" />
+    <meta property="og:description" content="Your place to gather. No algorithm, no ads — your circle, your rules." />
+    <meta property="og:image" content="/logo.png" />
+    <meta name="twitter:card" content="summary" />
+    <title>Skali</title>
+    <style>
+      #boot-splash {
+        position: fixed; inset: 0; z-index: 9999;
+        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px;
+        background: #0b1020;
+        transition: opacity .5s ease;
+      }
+      #boot-splash.hide { opacity: 0; pointer-events: none; }
+      #boot-splash .bs-mark {
+        width: 104px; height: 104px; object-fit: contain;
+        animation: bootpulse 1.7s ease-in-out infinite;
+        filter: drop-shadow(0 12px 40px rgba(124, 131, 163, .25));
+      }
+      #boot-splash .bs-word {
+        color: #ede6d8;
+        font: 600 26px/1 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        letter-spacing: .38em; text-transform: uppercase; padding-left: .38em;
+      }
+      #boot-splash .bs-tag {
+        color: #7c83a3;
+        font: 500 11px/1 ui-sans-serif, system-ui, sans-serif;
+        letter-spacing: .3em; text-transform: uppercase; padding-left: .3em;
+      }
+      @keyframes bootpulse {
+        0%, 100% { opacity: .55; transform: scale(.95); }
+        50%      { opacity: 1;   transform: scale(1); }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="boot-splash">
+      <img class="bs-mark" src="/logo.png" alt="Skali" />
+      <div class="bs-word">Skali</div>
+      <div class="bs-tag">Your place to gather</div>
+    </div>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      (function () {
+        var s = document.getElementById('boot-splash');
+        var r = document.getElementById('root');
+        function done() {
+          if (!s) return;
+          s.classList.add('hide');
+          setTimeout(function () { if (s) s.remove(); }, 600);
+        }
+        // Hide the splash the moment React has painted the app into #root.
+        var t = setInterval(function () {
+          if (r && r.children.length) { clearInterval(t); done(); }
+        }, 80);
+        // Safety net so the splash never gets stuck.
+        setTimeout(function () { clearInterval(t); done(); }, 6000);
+      })();
+    </script>
+  </body>
+</html>

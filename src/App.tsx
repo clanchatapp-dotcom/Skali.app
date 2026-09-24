@@ -15,6 +15,7 @@ import SearchPage from './pages/Search'
 import Interest from './pages/Interest'
 import Activity from './pages/Activity'
 import Admin from './pages/Admin'
+import Verify from './pages/Verify'
 import Settings from './pages/Settings'
 import Plans from './pages/Plans'
 import Connections from './pages/Connections'
@@ -66,6 +67,7 @@ export default function App() {
           <Route path="/messages/:handle/info" element={<ConversationInfo />} />
           <Route path="/activity" element={<Activity />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/verify" element={<Verify />} />
           <Route path="/plans" element={<Plans />} />
           <Route path="/connections" element={<Connections />} />
           <Route path="/groups" element={<Groups />} />

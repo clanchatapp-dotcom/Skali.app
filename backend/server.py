@@ -14,7 +14,7 @@ import jwt
 import httpx
 from dotenv import load_dotenv
 from fastapi import (
-    FastAPI, Depends, HTTPException, UploadFile, File, Header,
+    FastAPI, Depends, HTTPException, UploadFile, File, Header, Request,
     WebSocket, WebSocketDisconnect,
 )
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -566,6 +566,10 @@ async def public_profile(prof: dict, viewer_id: str) -> dict:
         out['notif_prefs'] = {**NOTIF_DEFAULTS, **(prof.get('notif_prefs') or {})}
         out['onboarded'] = bool(prof.get('onboarded'))
         out['interests'] = prof.get('interests', [])
+        # Block 2 — verification spine + monetisation gate.
+        out['verification'] = verification_view(prof)
+        out['monetisation_enabled'] = monetisation_ok(prof)
+        out['account_nsfw'] = bool(prof.get('account_nsfw'))
     else:
         # My relation (block/mute/restrict) toward this user, for the profile menu.
         out['my_relation'] = await get_relation(viewer_id, prof['id'])
@@ -1450,7 +1454,9 @@ async def feed(scope: str = 'general', u: dict = Depends(get_current_user)):
     vp = await db.profiles.find_one({'id': u['id']})
     _cz = {**COMFORT_ZONE_DEFAULTS, **((vp or {}).get('comfort_zone') or {})}
     hide_ai = _cz.get('ai') is False       # "AI generated content" toggle off -> hide AI-labelled posts
-    hide_nsfw = _cz.get('nsfw') is False    # NSFW toggle off (always off for minors) -> hide NSFW posts
+    # Fail-closed NSFW gate (Block 2): NSFW is hidden unless the viewer has the Comfort-Zone
+    # NSFW toggle ON *and* is an age-verified adult. Unverified/minor => always hidden.
+    hide_nsfw = (_cz.get('nsfw') is not True) or (not is_age_verified_adult(vp))
     out = []
     async for p in db.posts.find(q).sort('created_at', -1).limit(150):
         if p['author_id'] in hidden and p['author_id'] != u['id']:
@@ -3658,3 +3664,488 @@ async def admin_csam_resolve(report_id: str, a: dict = Depends(sensitive_access_
         'resolved_at': datetime.now(timezone.utc).isoformat()}})
     await audit(a, 'csam_resolve', r.get('target_id', ''), report_id)
     return {'ok': True, 'status': 'resolved'}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# BLOCK 2 — Verification spine (identity + age)  ·  gates ALL monetisation
+# ═══════════════════════════════════════════════════════════════════════════
+# We store STATUS ONLY, never raw identity documents. Providers (Yoti / OneID)
+# run server-side and confirm results via SIGNED webhooks. Fail-closed: an
+# unset provider secret means that provider's webhook is rejected, and an
+# unverified user has monetisation_enabled = False and cannot see adult content.
+
+YOTI_WEBHOOK_SECRET = os.environ.get('YOTI_WEBHOOK_SECRET', '')
+ONEID_WEBHOOK_SECRET = os.environ.get('ONEID_WEBHOOK_SECRET', '')
+
+VERIFY_TYPES = {'identity', 'age'}
+VERIFY_PROVIDERS = {'yoti', 'oneid'}
+VERIFY_STATUSES = {'unverified', 'pending', 'verified', 'failed'}
+
+
+def _blank_verification() -> dict:
+    return {
+        'identity': {'status': 'unverified', 'provider': None, 'at': None},
+        'age': {'status': 'unverified', 'provider': None, 'region': None, 'at': None},
+    }
+
+
+def verification_view(prof: dict) -> dict:
+    """Normalised verification block for API responses (status only — no documents)."""
+    v = (prof or {}).get('verification') or {}
+    base = _blank_verification()
+    ident = {**base['identity'], **(v.get('identity') or {})}
+    age = {**base['age'], **(v.get('age') or {})}
+    return {'identity': ident, 'age': age}
+
+
+def is_identity_verified(prof: dict) -> bool:
+    return (((prof or {}).get('verification') or {}).get('identity') or {}).get('status') == 'verified'
+
+
+def is_age_verified_adult(prof: dict) -> bool:
+    """True only when the account is an age-verified ADULT. Minors are always False.
+    Used as the fail-closed gate for all NSFW viewing / selection / discovery."""
+    if not prof or prof.get('is_minor'):
+        return False
+    return (((prof.get('verification') or {}).get('age')) or {}).get('status') == 'verified'
+
+
+def monetisation_ok(prof: dict) -> bool:
+    """Creator tools unlock only when BOTH identity AND age are verified (adult)."""
+    return bool(prof) and is_identity_verified(prof) and is_age_verified_adult(prof)
+
+
+async def require_monetisation(u: dict = Depends(get_current_user)) -> dict:
+    """Dependency for creator/monetisation endpoints. Fail-closed."""
+    if not monetisation_ok(u):
+        raise HTTPException(403, 'Monetisation is locked. Verify your identity and age to unlock creator tools.')
+    return u
+
+
+class VerificationStart(BaseModel):
+    type: str       # identity | age
+    provider: str   # yoti | oneid
+
+
+@app.post('/api/verification/start')
+async def verification_start(body: VerificationStart, u: dict = Depends(get_current_user)):
+    """Begin an identity or age verification. Creates a provider session and marks the
+    relevant status 'pending'. The real provider redirect/SDK handshake happens client-side;
+    the authoritative result arrives later via the provider's SIGNED webhook.
+    NOTE: minors can never age-verify as adults — the hardcoded minor block stays on top."""
+    vtype = (body.type or '').strip().lower()
+    provider = (body.provider or '').strip().lower()
+    if vtype not in VERIFY_TYPES:
+        raise HTTPException(400, 'Invalid verification type (identity | age)')
+    if provider not in VERIFY_PROVIDERS:
+        raise HTTPException(400, 'Invalid provider (yoti | oneid)')
+    session_id = str(uuid.uuid4())
+    await db.verification_sessions.insert_one({
+        'id': session_id, 'user_id': u['id'], 'type': vtype, 'provider': provider,
+        'status': 'pending', 'created_at': datetime.now(timezone.utc).isoformat()})
+    v = verification_view(u)
+    v[vtype]['status'] = 'pending'
+    v[vtype]['provider'] = provider
+    await db.profiles.update_one({'id': u['id']}, {'$set': {'verification': v}})
+    # In production this returns the provider's hosted-flow URL / SDK token. Stubbed here.
+    return {'session_id': session_id, 'type': vtype, 'provider': provider, 'status': 'pending',
+            'redirect_url': f'https://verify.skaliapp.com/{provider}/{vtype}?session={session_id}'}
+
+
+@app.get('/api/verification/status')
+async def verification_status(u: dict = Depends(get_current_user)):
+    prof = await db.profiles.find_one({'id': u['id']}, {'_id': 0})
+    return {'verification': verification_view(prof),
+            'monetisation_enabled': monetisation_ok(prof),
+            'is_minor': bool(prof.get('is_minor'))}
+
+
+def _verify_hmac(secret: str, raw: bytes, signature: Optional[str]) -> bool:
+    """Constant-time HMAC-SHA256 check. Fail-closed: no secret or no signature => reject."""
+    if not secret or not signature:
+        return False
+    expected = hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+    sig = signature.strip().lower()
+    if sig.startswith('sha256='):
+        sig = sig[7:]
+    return hmac.compare_digest(expected, sig)
+
+
+async def _apply_verification_result(user_id: str, vtype: str, status: str,
+                                     provider: str, region: Optional[str] = None):
+    """Write STATUS ONLY to the profile. Never stores identity documents.
+    Respects the hardcoded minor block: a minor can never become age-verified adult."""
+    prof = await db.profiles.find_one({'id': user_id})
+    if not prof:
+        raise HTTPException(404, 'Unknown subject')
+    v = verification_view(prof)
+    now = datetime.now(timezone.utc).isoformat()
+    if vtype == 'age':
+        if prof.get('is_minor') and status == 'verified':
+            status = 'failed'  # hardcoded child-safety wall stays on top
+        v['age'] = {'status': status, 'provider': provider, 'region': region, 'at': now}
+    else:
+        v['identity'] = {'status': status, 'provider': provider, 'at': now}
+    upd = {'verification': v}
+    # Recompute the monetisation gate from the fresh verification block.
+    merged = {**prof, 'verification': v}
+    upd['monetisation_enabled'] = monetisation_ok(merged)
+    await db.profiles.update_one({'id': user_id}, {'$set': upd})
+    await db.verification_sessions.update_many(
+        {'user_id': user_id, 'type': vtype, 'status': 'pending'},
+        {'$set': {'status': status, 'resolved_at': now}})
+
+
+async def _handle_verification_webhook(request_body: bytes, payload: dict, provider: str):
+    """Shared webhook logic for Yoti/OneID. Expected JSON (status only):
+    {user_id, type: 'identity'|'age', status: 'verified'|'failed'|'pending', region?}."""
+    user_id = payload.get('user_id') or payload.get('subject_id')
+    vtype = (payload.get('type') or '').strip().lower()
+    status = (payload.get('status') or '').strip().lower()
+    region = payload.get('region')
+    if vtype not in VERIFY_TYPES or status not in VERIFY_STATUSES or not user_id:
+        raise HTTPException(400, 'Malformed verification payload')
+    await _apply_verification_result(user_id, vtype, status, provider, region)
+    return {'ok': True, 'user_id': user_id, 'type': vtype, 'status': status}
+
+
+@app.post('/api/webhooks/yoti')
+async def yoti_webhook(request: Request):
+    raw = await request.body()
+    sig = request.headers.get('X-Yoti-Signature') or request.headers.get('x-yoti-signature')
+    if not _verify_hmac(YOTI_WEBHOOK_SECRET, raw, sig):
+        raise HTTPException(401, 'Invalid or missing webhook signature')
+    import json as _json
+    try:
+        payload = _json.loads(raw.decode() or '{}')
+    except Exception:
+        raise HTTPException(400, 'Invalid JSON')
+    return await _handle_verification_webhook(raw, payload, 'yoti')
+
+
+@app.post('/api/webhooks/oneid')
+async def oneid_webhook(request: Request):
+    raw = await request.body()
+    sig = request.headers.get('X-OneID-Signature') or request.headers.get('x-oneid-signature')
+    if not _verify_hmac(ONEID_WEBHOOK_SECRET, raw, sig):
+        raise HTTPException(401, 'Invalid or missing webhook signature')
+    import json as _json
+    try:
+        payload = _json.loads(raw.decode() or '{}')
+    except Exception:
+        raise HTTPException(400, 'Invalid JSON')
+    return await _handle_verification_webhook(raw, payload, 'oneid')
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# BLOCK 3 — Payments + entitlements (multi-PSP, account-level routing)
+# ═══════════════════════════════════════════════════════════════════════════
+# Skali is Merchant-of-Record. All purchases happen off-app on skaliapp.com; the
+# app only READS entitlements. Account-level PSP routing: any NSFW anywhere on an
+# account routes 100% of that account's money through CCBill (fallback Segpay/
+# Paxum); fully-SFW accounts use Stripe/Xsolla. Never per-transaction splitting.
+#
+# Money waterfall (exact): prices are VAT-INCLUSIVE.
+#   1) VAT carved out first        -> net_ex_vat = gross / (1 + vat_rate)
+#   2) Skali fee on NET ex-VAT     -> 10% subs/inner-circle, 7.5% tips
+#   3) PSP fee borne by CREATOR    -> psp_fee = psp_rate * gross
+#   creator_net = net_ex_vat - skali_fee - psp_fee   (Premium sub = 100% Skali)
+# Advertise "90% of net, less processing." Skali is positive-margin on every tier.
+
+STRIPE_WEBHOOK_SECRET = os.environ.get('STRIPE_WEBHOOK_SECRET', '')
+XSOLLA_WEBHOOK_SECRET = os.environ.get('XSOLLA_WEBHOOK_SECRET', '')
+CCBILL_WEBHOOK_SECRET = os.environ.get('CCBILL_WEBHOOK_SECRET', '')
+
+# Skali platform fee rates (charged on NET ex-VAT).
+SKALI_FEE_RATES = {'premium': 1.0, 'inner_circle': 0.10, 'tip': 0.075}
+# Approximate PSP processing rates (fraction of gross, borne by the creator).
+PSP_RATES = {'stripe': 0.029, 'xsolla': 0.05, 'ccbill': 0.109, 'segpay': 0.109, 'paxum': 0.05}
+# Paid Inner Circle price caps (monthly, GBP, VAT-inclusive).
+INNER_CIRCLE_TIERS = {1: 15.0, 2: 30.0, 3: 50.0}
+CHARGEBACK_FLAG_THRESHOLD = 3  # repeat offenders auto-flagged for review
+
+
+def account_is_nsfw(prof: dict) -> bool:
+    return bool((prof or {}).get('account_nsfw'))
+
+
+def route_psp(prof: dict) -> str:
+    """Resolve the single processor for this creator's account by NSFW flag.
+    NSFW anywhere on the account -> CCBill (adult-friendly). Otherwise Stripe."""
+    return 'ccbill' if account_is_nsfw(prof) else 'stripe'
+
+
+def compute_waterfall(gross: float, vat_rate: float, product: str, psp: str) -> dict:
+    """Exact money waterfall. gross is VAT-INCLUSIVE. Returns a rounded breakdown."""
+    gross = round(float(gross), 2)
+    vat_rate = max(0.0, float(vat_rate))
+    net_ex_vat = gross / (1 + vat_rate)
+    vat = gross - net_ex_vat
+    skali_fee = SKALI_FEE_RATES.get(product, 0.10) * net_ex_vat
+    psp_fee = PSP_RATES.get(psp, 0.03) * gross
+    if product == 'premium':
+        # Premium is Skali's own product (100% Skali). No creator payout.
+        skali_fee = net_ex_vat
+        creator_net = 0.0
+    else:
+        creator_net = net_ex_vat - skali_fee - psp_fee
+    r = lambda x: round(x + 1e-9, 2)
+    return {'gross': r(gross), 'vat': r(vat), 'vat_rate': vat_rate,
+            'net_ex_vat': r(net_ex_vat), 'skali_fee': r(skali_fee),
+            'psp_fee': r(psp_fee), 'creator_net': r(max(0.0, creator_net)),
+            'skali_margin': r(skali_fee)}
+
+
+async def _record_transaction(**kw) -> dict:
+    doc = {'id': str(uuid.uuid4()), 'status': 'settled',
+           'created_at': datetime.now(timezone.utc).isoformat(), **kw}
+    await db.transactions.insert_one(dict(doc))
+    return doc
+
+
+async def _grant_entitlement(user_id: str, etype: str, tier, psp: str,
+                             creator_id: Optional[str], period_days: int = 30) -> dict:
+    """Idempotent-ish upsert of an active entitlement the app reads."""
+    now = datetime.now(timezone.utc)
+    period_end = (now + timedelta(days=period_days)).isoformat() if period_days else None
+    key = {'user_id': user_id, 'type': etype, 'creator_id': creator_id}
+    doc = {**key, 'tier': tier, 'source_psp': psp, 'status': 'active',
+           'period_end': period_end, 'updated_at': now.isoformat()}
+    await db.entitlements.update_one(key, {'$set': doc,
+        '$setOnInsert': {'id': str(uuid.uuid4()), 'created_at': now.isoformat()}}, upsert=True)
+    return await db.entitlements.find_one(key, {'_id': 0})
+
+
+async def _revoke_entitlement(user_id: str, etype: str, creator_id: Optional[str], reason: str):
+    await db.entitlements.update_one(
+        {'user_id': user_id, 'type': etype, 'creator_id': creator_id},
+        {'$set': {'status': 'revoked' if reason == 'chargeback' else 'canceled',
+                  'revoke_reason': reason, 'updated_at': datetime.now(timezone.utc).isoformat()}})
+
+
+async def _adjust_creator_balance(creator_id: Optional[str], delta: float):
+    if not creator_id:
+        return
+    await db.payout_balances.update_one({'creator_id': creator_id},
+        {'$inc': {'pending': round(delta, 2)},
+         '$set': {'updated_at': datetime.now(timezone.utc).isoformat()}}, upsert=True)
+
+
+@app.get('/api/entitlements')
+async def my_entitlements(u: dict = Depends(get_current_user)):
+    """The app reads this to know what the user has unlocked. Read-only on every platform
+    (iOS build shows status only — no price/buy/subscribe UI for digital goods)."""
+    out = []
+    now = datetime.now(timezone.utc).isoformat()
+    async for e in db.entitlements.find({'user_id': u['id']}, {'_id': 0}):
+        if e.get('status') == 'active' and e.get('period_end') and e['period_end'] < now:
+            e['status'] = 'expired'
+            await db.entitlements.update_one({'id': e['id']}, {'$set': {'status': 'expired'}})
+        out.append(e)
+    return {'entitlements': out,
+            'premium': any(e['type'] == 'premium' and e['status'] == 'active' for e in out)}
+
+
+class CheckoutStart(BaseModel):
+    product: str                       # premium | inner_circle | tip
+    creator_handle: Optional[str] = None
+    tier: Optional[int] = None         # inner_circle: 1|2|3
+    amount: Optional[float] = None     # tip amount (VAT-inclusive)
+    vat_rate: Optional[float] = 0.20   # customer-country VAT rate
+
+
+@app.post('/api/checkout/session')
+async def checkout_session(body: CheckoutStart, u: dict = Depends(get_current_user)):
+    """Create a WEB checkout session (fulfilled on skaliapp.com). Returns the hosted
+    checkout URL and the resolved PSP. The PSP is chosen by the SELLER account's NSFW flag
+    (Skali itself for Premium). No money moves here — the PSP webhook grants entitlements."""
+    product = (body.product or '').strip().lower()
+    if product not in SKALI_FEE_RATES:
+        raise HTTPException(400, 'Unknown product')
+    creator = None
+    if product in ('inner_circle', 'tip'):
+        if not body.creator_handle:
+            raise HTTPException(400, 'creator_handle is required')
+        creator = await resolve_profile(body.creator_handle, {'_id': 0})
+        if not creator:
+            raise HTTPException(404, 'Creator not found')
+        if not monetisation_ok(creator):
+            raise HTTPException(403, 'This creator is not set up to receive payments yet')
+    # Price + PSP resolution
+    if product == 'inner_circle':
+        tier = int(body.tier or 1)
+        if tier not in INNER_CIRCLE_TIERS:
+            raise HTTPException(400, 'Invalid Inner Circle tier (1, 2 or 3)')
+        gross = INNER_CIRCLE_TIERS[tier]
+    elif product == 'tip':
+        gross = round(float(body.amount or 0), 2)
+        if gross <= 0:
+            raise HTTPException(400, 'Tip amount must be greater than zero')
+        tier = None
+    else:  # premium
+        gross = round(float(body.amount or 5.0), 2)
+        tier = 'premium'
+    # PSP: Premium is billed by Skali (Stripe/Xsolla, SFW); creator products follow the
+    # creator account's NSFW flag.
+    psp = route_psp(creator) if creator else 'stripe'
+    session_id = str(uuid.uuid4())
+    quote = compute_waterfall(gross, float(body.vat_rate or 0.20), product, psp)
+    await db.checkout_sessions.insert_one({
+        'id': session_id, 'buyer_id': u['id'],
+        'creator_id': creator['id'] if creator else None,
+        'product': product, 'tier': tier, 'gross': gross, 'psp': psp,
+        'content_class': 'nsfw' if (creator and account_is_nsfw(creator)) else 'sfw',
+        'vat_rate': float(body.vat_rate or 0.20), 'quote': quote,
+        'status': 'created', 'created_at': datetime.now(timezone.utc).isoformat()})
+    return {'session_id': session_id, 'psp': psp, 'gross': gross, 'currency': 'GBP',
+            'quote': quote,
+            'checkout_url': f'https://skaliapp.com/checkout?session={session_id}&psp={psp}'}
+
+
+async def _fulfil_checkout(session_id: str, psp: str) -> dict:
+    """Grant the entitlement + write the ledger transaction for a completed checkout."""
+    s = await db.checkout_sessions.find_one({'id': session_id})
+    if not s:
+        raise HTTPException(404, 'Unknown checkout session')
+    if s.get('status') == 'fulfilled':
+        return {'ok': True, 'already': True}
+    product, buyer, creator = s['product'], s['buyer_id'], s.get('creator_id')
+    wf = s.get('quote') or compute_waterfall(s['gross'], s.get('vat_rate', 0.20), product, psp)
+    etype = 'premium' if product == 'premium' else ('inner_circle' if product == 'inner_circle' else 'tip')
+    if product != 'tip':
+        await _grant_entitlement(buyer, etype, s.get('tier'), psp, creator, period_days=30)
+        if product == 'inner_circle':
+            await db.subscriptions.update_one(
+                {'buyer_id': buyer, 'creator_id': creator, 'type': 'inner_circle'},
+                {'$set': {'id': str(uuid.uuid4()), 'buyer_id': buyer, 'creator_id': creator,
+                          'type': 'inner_circle', 'tier': s.get('tier'), 'price': s['gross'],
+                          'psp': psp, 'status': 'active',
+                          'updated_at': datetime.now(timezone.utc).isoformat()}}, upsert=True)
+    txn = await _record_transaction(
+        session_id=session_id, buyer_id=buyer, creator_id=creator, product=product,
+        currency='GBP', psp=psp, content_class=s.get('content_class', 'sfw'), **wf)
+    await _adjust_creator_balance(creator, wf['creator_net'])
+    await db.checkout_sessions.update_one({'id': session_id},
+        {'$set': {'status': 'fulfilled', 'psp': psp,
+                  'fulfilled_at': datetime.now(timezone.utc).isoformat()}})
+    return {'ok': True, 'transaction_id': txn['id'], 'creator_net': wf['creator_net']}
+
+
+async def _handle_chargeback(session_id: str):
+    """Proportional clawback from the creator's payout + repeat-offender flag."""
+    txn = await db.transactions.find_one({'session_id': session_id})
+    if not txn:
+        return {'ok': False, 'reason': 'no transaction'}
+    await db.transactions.update_one({'id': txn['id']},
+        {'$set': {'status': 'chargeback', 'updated_at': datetime.now(timezone.utc).isoformat()}})
+    creator = txn.get('creator_id')
+    if creator:
+        await _adjust_creator_balance(creator, -abs(txn.get('creator_net', 0)))  # proportional clawback
+        cnt = await db.transactions.count_documents({'creator_id': creator, 'status': 'chargeback'})
+        if cnt >= CHARGEBACK_FLAG_THRESHOLD:
+            await db.payout_balances.update_one({'creator_id': creator},
+                {'$set': {'payout_review_flag': True}}, upsert=True)
+    # Revoke the buyer's entitlement for this purchase.
+    etype = 'premium' if txn['product'] == 'premium' else ('inner_circle' if txn['product'] == 'inner_circle' else 'tip')
+    if txn['product'] != 'tip':
+        await _revoke_entitlement(txn['buyer_id'], etype, creator, 'chargeback')
+    return {'ok': True, 'clawed_back': txn.get('creator_net', 0)}
+
+
+async def _process_psp_event(psp: str, payload: dict):
+    """Normalised PSP event handler. Expected: {event, session_id?, subscription_ref?}."""
+    event = (payload.get('event') or payload.get('type') or '').lower()
+    session_id = payload.get('session_id') or payload.get('client_reference_id')
+    if event in ('checkout.completed', 'checkout.session.completed', 'invoice.paid',
+                 'payment.success', 'newsalesuccess', 'renewalsuccess'):
+        if not session_id:
+            raise HTTPException(400, 'Missing session_id')
+        return await _fulfil_checkout(session_id, psp)
+    if event in ('subscription.canceled', 'customer.subscription.deleted', 'cancellation', 'expiration'):
+        s = await db.checkout_sessions.find_one({'id': session_id}) if session_id else None
+        if s:
+            etype = 'premium' if s['product'] == 'premium' else 'inner_circle'
+            await _revoke_entitlement(s['buyer_id'], etype, s.get('creator_id'), 'canceled')
+            await db.subscriptions.update_many(
+                {'buyer_id': s['buyer_id'], 'creator_id': s.get('creator_id')},
+                {'$set': {'status': 'canceled'}})
+        return {'ok': True, 'revoked': True}
+    if event in ('charge.dispute.created', 'chargeback', 'dispute'):
+        return await _handle_chargeback(session_id)
+    return {'ok': True, 'ignored': event}
+
+
+@app.post('/api/webhooks/stripe')
+async def stripe_webhook(request: Request):
+    raw = await request.body()
+    sig = request.headers.get('Stripe-Signature') or request.headers.get('stripe-signature')
+    if not _verify_hmac(STRIPE_WEBHOOK_SECRET, raw, sig):
+        raise HTTPException(401, 'Invalid or missing webhook signature')
+    import json as _json
+    return await _process_psp_event('stripe', _json.loads(raw.decode() or '{}'))
+
+
+@app.post('/api/webhooks/ccbill')
+async def ccbill_webhook(request: Request):
+    raw = await request.body()
+    sig = request.headers.get('X-CCBill-Signature') or request.headers.get('x-ccbill-signature')
+    if not _verify_hmac(CCBILL_WEBHOOK_SECRET, raw, sig):
+        raise HTTPException(401, 'Invalid or missing webhook signature')
+    import json as _json
+    return await _process_psp_event('ccbill', _json.loads(raw.decode() or '{}'))
+
+
+@app.post('/api/webhooks/xsolla')
+async def xsolla_webhook(request: Request):
+    raw = await request.body()
+    sig = request.headers.get('X-Xsolla-Signature') or request.headers.get('authorization')
+    if not _verify_hmac(XSOLLA_WEBHOOK_SECRET, raw, sig):
+        raise HTTPException(401, 'Invalid or missing webhook signature')
+    import json as _json
+    return await _process_psp_event('xsolla', _json.loads(raw.decode() or '{}'))
+
+
+@app.post('/api/account/nsfw-flip')
+async def account_nsfw_flip(u: dict = Depends(get_current_user)):
+    """Flip a fully-SFW account to NSFW. Existing Stripe/Xsolla subscriptions run to
+    period end, then cancel and must re-subscribe on CCBill (adult money NEVER runs
+    through Stripe retroactively). Fans get a re-consent prompt. Sets account_nsfw=True
+    so all FUTURE checkout routing goes through CCBill."""
+    if account_is_nsfw(u):
+        return {'ok': True, 'account_nsfw': True, 'already': True}
+    await db.profiles.update_one({'id': u['id']}, {'$set': {'account_nsfw': True,
+        'nsfw_flipped_at': datetime.now(timezone.utc).isoformat()}})
+    # Mark existing non-CCBill subs to run to period end, then re-subscribe on CCBill.
+    flip_count = 0
+    async for sub in db.subscriptions.find({'creator_id': u['id'], 'status': 'active',
+                                            'psp': {'$in': ['stripe', 'xsolla']}}):
+        await db.subscriptions.update_one({'id': sub['id']},
+            {'$set': {'flip_pending': True, 'resubscribe_psp': 'ccbill', 'cancel_at_period_end': True}})
+        # Fan re-consent prompt for the buyer.
+        await db.reconsent_prompts.update_one(
+            {'buyer_id': sub['buyer_id'], 'creator_id': u['id']},
+            {'$set': {'id': str(uuid.uuid4()), 'buyer_id': sub['buyer_id'], 'creator_id': u['id'],
+                      'reason': 'creator_switched_to_nsfw', 'status': 'pending',
+                      'created_at': datetime.now(timezone.utc).isoformat()}}, upsert=True)
+        flip_count += 1
+    return {'ok': True, 'account_nsfw': True, 'subscriptions_flipped': flip_count,
+            'future_psp': 'ccbill'}
+
+
+@app.get('/api/creator/finance')
+async def creator_finance(u: dict = Depends(require_monetisation)):
+    """Consolidated earnings across ALL PSPs into one ledger (Block 4 Finance foundation).
+    Every line carries gross / VAT / PSP fee / Skali cut / creator net."""
+    txns, totals = [], {'gross': 0.0, 'vat': 0.0, 'psp_fee': 0.0, 'skali_fee': 0.0, 'creator_net': 0.0}
+    async for t in db.transactions.find({'creator_id': u['id']}, {'_id': 0}).sort('created_at', -1).limit(500):
+        txns.append(t)
+        if t.get('status') != 'chargeback':
+            for k in totals:
+                totals[k] = round(totals[k] + float(t.get(k, 0) or 0), 2)
+    bal = await db.payout_balances.find_one({'creator_id': u['id']}, {'_id': 0}) or {}
+    return {'transactions': txns, 'totals': totals,
+            'pending_payout': round(float(bal.get('pending', 0) or 0), 2),
+            'payout_review_flag': bool(bal.get('payout_review_flag')),
+            'note': 'Skali is Merchant-of-Record; VAT is remitted by Skali. You keep 90% of net, less processing.'}
+

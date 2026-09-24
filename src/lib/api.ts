@@ -103,6 +103,12 @@ export const api = {
   setDob: (dob: string) => req('/auth/dob', { method: 'POST', body: j({ dob }) }),
   authLogin: (email: string, password: string) => req('/auth/login', { method: 'POST', body: j({ email, password }) }),
   me: () => req('/me'),
+  // Block 2 — verification spine
+  verificationStatus: () => req('/verification/status'),
+  verificationStart: (type: 'identity' | 'age', provider: 'yoti' | 'oneid') => req('/verification/start', { method: 'POST', body: j({ type, provider }) }),
+  // Block 3 — entitlements (read-only) + creator finance
+  entitlements: () => req('/entitlements'),
+  creatorFinance: () => req('/creator/finance'),
   updateProfile: (b: any) => req('/profile', { method: 'PUT', body: j(b) }),
   changeHandle: (handle: string) => req('/profile/handle', { method: 'POST', body: j({ handle }) }),
   setNickname: (handle: string, nickname: string) => req(`/inner/${handle}/nickname`, { method: 'PUT', body: j({ nickname }) }),

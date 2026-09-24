@@ -420,6 +420,15 @@ export default function Settings() {
           </>
         )}
 
+        {/* Always-visible: Verification & monetisation (Block 2) */}
+        <section className="bg-panel border border-edge rounded-2xl p-5" data-testid="settings-verification">
+          <h2 className="font-semibold mb-1 text-slate-300">Verification & monetisation</h2>
+          <p className="text-sm text-slate-400 mb-3">Verify your identity and age to unlock creator tools, subscriptions and tips.</p>
+          <button data-testid="settings-open-verify" onClick={() => nav('/verify')} className="w-full px-3 py-2.5 rounded-xl bg-brand text-white font-semibold text-sm">
+            Open verification
+          </button>
+        </section>
+
         {/* Always-visible: Legal & policies */}
         <section className="bg-panel border border-edge rounded-2xl p-5" data-testid="settings-legal">
           <h2 className="font-semibold mb-3 text-slate-300">Legal & policies</h2>

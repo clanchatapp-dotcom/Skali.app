@@ -32,6 +32,18 @@ services:
         sync: false
       - key: SEED_ADMIN_PASSWORD  # bootstrap super-admin password — SECRET, env only
         sync: false
+      # Block 2 — verification webhook secrets (HMAC-SHA256; fail-closed if unset)
+      - key: YOTI_WEBHOOK_SECRET
+        sync: false
+      - key: ONEID_WEBHOOK_SECRET
+        sync: false
+      # Block 3 — PSP webhook secrets (HMAC-SHA256; fail-closed if unset)
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: XSOLLA_WEBHOOK_SECRET
+        sync: false
+      - key: CCBILL_WEBHOOK_SECRET
+        sync: false
       - key: LIVEKIT_URL
         sync: false
       - key: LIVEKIT_API_KEY

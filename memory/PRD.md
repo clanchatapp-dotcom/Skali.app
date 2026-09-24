@@ -46,7 +46,34 @@ Capacitor (web/Android) frontend, FastAPI (Python 3.11) + MongoDB (Motor) backen
   `src/lib/api.ts` (`setStepUp`/`hasStepUp`, `X-Step-Up` header) + `src/pages/Admin.tsx` prompts.
 - Verified: 22/22 backend tests pass (`backend/tests/test_block1_hardening.py`), iteration_1.json.
 
-## Backlog (prioritised)
+## Implemented (session 2) — Block 2 + Block 3 ✅ (2026-09-24)
+### Block 2 — Verification spine
+- Profile gains `verification: {identity:{status,provider,at}, age:{status,provider,region,at}}`
+  and a computed `monetisation_enabled`. Status only — no ID documents are ever persisted.
+- `POST /api/verification/start` (identity|age × yoti|oneid) marks status `pending` + returns a
+  provider redirect URL (stub). `GET /api/verification/status` reports state + gate.
+- Signed webhooks `POST /api/webhooks/yoti` + `/api/webhooks/oneid`: HMAC-SHA256 over raw body
+  (`X-Yoti-Signature` / `X-OneID-Signature`); unsigned/invalid → 401 (fail-closed). Write status only.
+- `monetisation_ok` gate = identity verified AND age-verified adult → exposed in `/me`; `require_monetisation`
+  dependency guards creator endpoints. Fail-closed NSFW feed gate now also requires age-verified adult.
+- Hardcoded minor block stays on top: a minor age-`verified` webhook is forced to `failed`.
+### Block 3 — Payments + entitlements
+- Collections: `entitlements`, `transactions` (ledger), `subscriptions`, `checkout_sessions`,
+  `payout_balances`, `reconsent_prompts`.
+- Account-level PSP router (`route_psp`): NSFW account → CCBill (fallback Segpay/Paxum), else Stripe.
+- Money waterfall (`compute_waterfall`): VAT carved first (VAT-inclusive prices); Skali fee on NET ex-VAT
+  (10% subs/inner-circle, 7.5% tips); PSP fee borne by creator; Premium = 100% Skali. Skali positive-margin verified.
+- `POST /api/checkout/session` (web, skaliapp.com) → PSP + quote + hosted URL; app only READS
+  `GET /api/entitlements`. Signed PSP webhooks `/api/webhooks/{stripe,ccbill,xsolla}` grant/revoke +
+  write ledger; chargeback → proportional creator clawback + repeat-offender flag (≥3).
+- SFW→NSFW flip (`POST /api/account/nsfw-flip`): existing Stripe/Xsolla subs run to period end → cancel →
+  re-subscribe on CCBill; fan re-consent prompts created; future routing = CCBill. Adult money never on Stripe retroactively.
+- `GET /api/creator/finance` — consolidated cross-PSP ledger (gross/VAT/PSP fee/Skali cut/creator net) — Block 4 foundation.
+- Frontend: `src/pages/Verify.tsx` (route `/verify`, linked from Settings) drives identity+age verification and
+  shows the monetisation locked/unlocked banner; `api.ts` gains verificationStatus/Start, entitlements, creatorFinance.
+- Verified: 27/27 local + 15/15 independent testing-agent tests pass (iteration_2.json).
+
+
 - **P0 (owner, non-code)**: rotate leaked Supabase service-role key + JWT secret; set prod env
   (`CSAM_STEPUP_SECRET_HASH`, `SEED_ADMIN_PASSWORD`, `DM_ENC_KEY`); ICO + Skali Ltd + trademarks.
 - **P0 (next session) — Block 2**: verification spine (Yoti/OneID signed webhooks, `monetisation_enabled`

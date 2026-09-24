@@ -8,13 +8,18 @@ export default function Choices() {
   const nav = useNavigate()
   const [data, setData] = useState<any>(null)
   const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
 
   const load = () => api.choices().then(setData).catch(() => setData({ opt_in: false, posts: [], sponsored: [] }))
   useEffect(() => { load() }, [])
 
   const toggle = async () => {
-    setBusy(true)
-    try { await api.choicesOptIn(); await load() } catch (e: any) { alert(e.message) } finally { setBusy(false) }
+    setBusy(true); setErr('')
+    try { await api.choicesOptIn(); await load() }
+    catch (e: any) {
+      const m = String(e?.message || '')
+      setErr(/not found/i.test(m) ? "Choices isn't available on this server yet. If you just updated the app, please redeploy the backend." : m)
+    } finally { setBusy(false) }
   }
 
   return (
@@ -39,6 +44,7 @@ export default function Choices() {
             <button onClick={toggle} disabled={busy} className="px-6 py-2.5 rounded-xl bg-brand text-white font-semibold" data-testid="choices-optin-btn">
               {busy ? 'Turning on…' : 'Turn on Choices'}
             </button>
+            {err && <p className="text-sm text-rose-400 mt-3" data-testid="choices-error">{err}</p>}
           </div>
         ) : (
           <div className="space-y-4">

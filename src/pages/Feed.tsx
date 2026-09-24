@@ -17,6 +17,13 @@ function Composer({ onPosted }: { onPosted: () => void }) {
   const [uploading, setUploading] = useState(false)
   const [aiLabel, setAiLabel] = useState('none')
   const [expanded, setExpanded] = useState(false)
+  const [nsfwTags, setNsfwTags] = useState<string[]>([])
+  const [nsfwVocab, setNsfwVocab] = useState<string[]>([])
+  const [nsfwEligible, setNsfwEligible] = useState(false)
+
+  useEffect(() => {
+    api.nsfwTags().then((r: any) => { setNsfwEligible(!!r.eligible); setNsfwVocab(r.tags || []) }).catch(() => {})
+  }, [])
 
   const fileRef = useRef<HTMLInputElement | null>(null)
 
@@ -60,12 +67,14 @@ function Composer({ onPosted }: { onPosted: () => void }) {
         media_url: media?.url,
         media_type: media?.type,
         tags,
+        nsfw_tags: nsfwTags,
         people_tags: people,
         ai_label: media ? aiLabel : 'none'
       })
 
       setText('')
       setTags([])
+      setNsfwTags([])
       setPeople([])
       setMedia(null)
       setAiLabel('none')
@@ -266,6 +275,34 @@ function Composer({ onPosted }: { onPosted: () => void }) {
                   })}
                 </div>
               </div>
+
+              {/* Block 5: closed NSFW selector — adults-only, chosen from the server vocab */}
+              {nsfwEligible && nsfwVocab.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-edge" data-testid="composer-nsfw">
+                  <div className="text-xs text-rose-400/80 mb-1.5 font-medium">NSFW labels (18+ only)</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {nsfwVocab.map(tag => {
+                      const active = nsfwTags.includes(tag)
+                      return (
+                        <button
+                          key={tag}
+                          type="button"
+                          data-testid={`composer-nsfw-${tag.replace('@', '').toLowerCase()}`}
+                          onClick={() => setNsfwTags(active ? nsfwTags.filter(t => t !== tag) : [...nsfwTags, tag])}
+                          className={`text-xs px-2.5 py-1 rounded-full border transition ${
+                            active ? 'bg-rose-500/20 text-rose-300 border-rose-500/50' : 'border-edge text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          {tag}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  {nsfwTags.length > 0 && (
+                    <div className="text-[11px] text-slate-500 mt-1.5">This post will be marked NSFW and shown only to age-verified adults with NSFW turned on.</div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

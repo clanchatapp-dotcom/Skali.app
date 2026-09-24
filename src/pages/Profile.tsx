@@ -6,9 +6,9 @@ import PostCard from '../components/PostCard'
 import RoleBadge from '../components/RoleBadge'
 import AccountBadge from '../components/AccountBadge'
 import { useAuth } from '../lib/auth'
-import { ArrowLeft, MoreHorizontal, Lock, Loader2, Check, Link as LinkIcon, Camera, Trash2, Ban, VolumeX, ShieldOff, Plus, MessagesSquare, Send, X, Pin, Settings as SettingsIcon, ChevronRight } from 'lucide-react'
+import { ArrowLeft, MoreHorizontal, Lock, Loader2, Check, Link as LinkIcon, Camera, Trash2, Ban, VolumeX, ShieldOff, Plus, MessagesSquare, Send, X, Pin, Settings as SettingsIcon, ChevronRight, Heart, Store, Gift } from 'lucide-react'
 
-const TABS = ['media', 'wall', 'boards', 'audio'] as const
+const TABS = ['media', 'wall', 'boards', 'shop', 'audio'] as const
 type Tab = typeof TABS[number]
 export default function Profile() {
   const { handle } = useParams()
@@ -20,6 +20,8 @@ export default function Profile() {
   const [loading, setLoading] = useState(true)
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [offers, setOffers] = useState<any>(null)
+  const [buy, setBuy] = useState<null | 'sub' | 'tip'>(null)
 
   const load = async () => {
     setLoading(true)
@@ -31,6 +33,7 @@ export default function Profile() {
       }
       setP(prof)
       setPosts(await api.getUserPosts(handle!))
+      if (!prof.is_self) { api.creatorOffers(handle!).then(setOffers).catch(() => setOffers(null)) }
     } catch {
       setP(null)
     } finally {
@@ -188,8 +191,20 @@ export default function Profile() {
                 <Lock className="h-3.5 w-3.5" />
                 {p.inner_status === 'accepted' ? 'In your Inner Circle' : p.inner_status === 'pending' ? 'Invite sent' : 'Invite to Inner Circle'}
               </button>
+              {offers?.monetisation_enabled && offers?.inner_circle_enabled && (
+                <button onClick={() => setBuy('sub')} data-testid="profile-subscribe-btn" className="px-4 py-1.5 rounded-full bg-gradient-to-r from-brand to-violet-600 text-white text-xs font-semibold flex items-center gap-1.5">
+                  <Heart className="h-3.5 w-3.5" /> Subscribe
+                </button>
+              )}
+              {offers?.monetisation_enabled && offers?.accepts_tips && (
+                <button onClick={() => setBuy('tip')} data-testid="profile-tip-btn" className="px-4 py-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 text-amber-300 text-xs font-semibold flex items-center gap-1.5">
+                  <Gift className="h-3.5 w-3.5" /> Tip
+                </button>
+              )}
             </div>
           )}
+
+          {buy && <BuySheet mode={buy} handle={p.handle} offers={offers} onClose={() => setBuy(null)} />}
 
 
         </div>
@@ -223,6 +238,8 @@ export default function Profile() {
             <WallTab handle={p.handle} />
           ) : tab === 'boards' ? (
             <BoardsTab handle={p.handle} isSelf={p.is_self} />
+          ) : tab === 'shop' ? (
+            <ShopTab handle={p.handle} />
           ) : current.length === 0 ? (
             <p className="text-center text-slate-500 py-14">No {tab} posts yet.</p>
           ) : (
@@ -237,6 +254,87 @@ export default function Profile() {
 }
 
 /* ---- unchanged helpers below ---- */
+
+function BuySheet({ mode, handle, offers, onClose }: { mode: 'sub' | 'tip'; handle: string; offers: any; onClose: () => void }) {
+  const [tier, setTier] = useState<number>(offers?.tiers?.[0]?.tier || 1)
+  const [amount, setAmount] = useState('5')
+  const [busy, setBusy] = useState(false)
+  const nsfw = !!offers?.account_nsfw
+  const go = async () => {
+    setBusy(true)
+    try {
+      const body = mode === 'sub'
+        ? { product: 'inner_circle', creator_handle: handle, tier }
+        : { product: 'tip', creator_handle: handle, amount: parseFloat(amount) }
+      const r = await api.checkoutSession(body)
+      if (r.checkout_url) window.open(r.checkout_url, '_blank')
+      onClose()
+    } catch (e: any) { alert(e.message) } finally { setBusy(false) }
+  }
+  return (
+    <div className="fixed inset-0 z-[70] bg-black/70 backdrop-blur grid place-items-end sm:place-items-center p-0 sm:p-4" onClick={onClose}>
+      <div className="bg-panel border border-edge rounded-t-2xl sm:rounded-2xl w-full max-w-md p-5" onClick={e => e.stopPropagation()} data-testid="buy-sheet">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-bold text-lg">{mode === 'sub' ? 'Subscribe' : 'Send a tip'}</h3>
+          <button onClick={onClose} className="h-8 w-8 grid place-items-center rounded-lg hover:bg-white/10"><X className="h-5 w-5" /></button>
+        </div>
+        {mode === 'sub' ? (
+          <div className="space-y-2 mb-4">
+            {(offers?.tiers || []).map((t: any) => (
+              <button key={t.tier} onClick={() => setTier(t.tier)} data-testid={`buy-tier-${t.tier}`}
+                className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border ${tier === t.tier ? 'border-brand bg-brand/10' : 'border-edge'}`}>
+                <span className="font-medium">Inner Circle · Tier {t.tier}</span>
+                <span className="font-bold">£{Number(t.price).toFixed(2)}/mo</span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="mb-4">
+            <label className="text-sm text-slate-400">Amount (£)</label>
+            <input value={amount} onChange={e => setAmount(e.target.value)} inputMode="decimal" data-testid="tip-amount"
+              className="w-full mt-1 bg-ink border border-edge rounded-xl px-3 py-2.5 outline-none focus:border-brand" />
+          </div>
+        )}
+        <p className="text-xs text-slate-500 mb-3">Payment completes securely on skaliapp.com{nsfw ? ' via CCBill' : ''}. You'll be taken there to finish.</p>
+        <button onClick={go} disabled={busy} data-testid="buy-confirm" className="w-full py-3 rounded-xl bg-brand text-white font-semibold disabled:opacity-50">
+          {busy ? 'Opening checkout…' : mode === 'sub' ? 'Continue to checkout' : `Tip £${amount || '0'}`}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function ShopTab({ handle }: { handle: string }) {
+  const [data, setData] = useState<any>(null)
+  const [busy, setBusy] = useState<string>('')
+  useEffect(() => { api.creatorPublicShop(handle).then(setData).catch(() => setData({ products: [] })) }, [handle])
+  const order = async (id: string) => {
+    setBusy(id)
+    try { const r = await api.shopOrder(id); if (r.checkout_url) window.open(r.checkout_url, '_blank') }
+    catch (e: any) { alert(e.message) } finally { setBusy('') }
+  }
+  if (!data) return <div className="py-10 grid place-items-center"><Loader2 className="h-5 w-5 animate-spin text-slate-500" /></div>
+  if (!data.monetisation_enabled) return <p className="text-center text-slate-500 py-14">This creator's shop isn't open yet.</p>
+  if ((data.products || []).length === 0) return <p className="text-center text-slate-500 py-14">No products in this shop yet.</p>
+  return (
+    <div className="space-y-3" data-testid="profile-shop">
+      {data.products.map((p: any) => (
+        <div key={p.id} className="bg-panel border border-edge rounded-2xl p-4 flex items-center gap-3">
+          <Store className="h-5 w-5 text-brand shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="font-medium truncate">{p.title}</div>
+            <div className="text-xs text-slate-400 capitalize">{p.kind} · £{Number(p.price).toFixed(2)}</div>
+            {p.description && <div className="text-xs text-slate-500 mt-0.5 line-clamp-2">{p.description}</div>}
+          </div>
+          <button onClick={() => order(p.id)} disabled={busy === p.id} data-testid={`buy-product-${p.id}`}
+            className="px-4 py-2 rounded-xl bg-brand text-white text-sm font-semibold shrink-0 disabled:opacity-50">
+            {busy === p.id ? '…' : 'Buy'}
+          </button>
+        </div>
+      ))}
+    </div>
+  )
+}
 
 function WallTab({ handle }: { handle: string }) {
   const [data, setData] = useState<any>({ can_post: false, posts: [] })

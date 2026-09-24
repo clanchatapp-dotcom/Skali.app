@@ -83,6 +83,7 @@ export default function PostCard({ post, onDelete }: { post: any; onDelete?: (id
             <span className="text-slate-500 text-sm">#{a.handle}</span>
             <span className="text-slate-600 text-sm">· {timeAgo(post.created_at)}</span>
             {pinned && <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border border-brand/40 bg-brand/10 text-brand"><Pin className="h-3 w-3" />Pinned</span>}
+            {post.nsfw && <span data-testid="nsfw-badge" className="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border border-rose-500/50 bg-rose-500/10 text-rose-400 uppercase tracking-wide">{(post.nsfw_tags && post.nsfw_tags[0]) || '@NSFW'}</span>}
             <span className={`ml-auto inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border ${tier.bg} ${tier.text} ${tier.ring}`}>
               <TierIcon className="h-3 w-3" />{tier.label}
             </span>

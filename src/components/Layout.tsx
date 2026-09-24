@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   Home,
   Search,
+  Compass,
   MessageCircle,
   Bell,
   User,
@@ -47,6 +48,11 @@ const NAV = [
     to: '/search',
     icon: Search,
     label: 'Find'
+  },
+  {
+    to: '/choices',
+    icon: Compass,
+    label: 'Choices'
   },
   {
     to: '/messages',

@@ -1,0 +1,35 @@
+{
+  "summary": "Skali Block 5 (Discovery: freeform tag registry + closed NSFW selector + Choices/sponsored + creator storefront + checkout PSP routing) tested end-to-end against the external preview URL. 15/15 pytest cases passed. Every acceptance criterion in the review request was verified independently (tag cap+dedupe+singularise, blocked explicit/hate tags returning generic 400 without echoing the offending word, auto-watchlist after 3 blocked attempts, NSFW selector fail-closed for unverified users, adult+comfort-on flow producing account_nsfw:true, /api/tags/similar+/trending, /api/choices opt-in gating + sponsored-only-in-Choices + NSFW hidden from ineligible users, verified-only /api/sponsored, /api/creators/{h}/offers returning 3 inner-circle tiers £15/£30/£50, /api/creators/{h}/shop, /api/checkout/session PSP=stripe for SFW creators and PSP=ccbill for NSFW creators, /api/shop/order/{id}, and regression on /api/me + /api/feed?scope=public + /api/posts + /api/entitlements). Frontend is Vite (not Expo) — per review request no UI testing was performed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_block5_discovery.py",
+    "/app/test_reports/pytest/block5.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is 4746 lines — well over the 700-line guideline. Recommend splitting into modules (auth, posts, tags, choices, checkout, admin, webhooks) when a refactor window opens. Not a functional bug.",
+    "/api/nsfw-tags correctly fails closed by returning {tags:[], eligible:false} instead of 403 — a good UX/privacy choice (namespace invisible to ineligible users).",
+    "Abuse threshold uses count_documents on abuse_log across a user's lifetime (>=3), so once a user is watchlisted they remain. Consider windowing (e.g. rolling 24h) if false positives become an issue — noted, not blocking."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_block5_discovery.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (15/15)",
+    "frontend": "n/a (backend-only per request; frontend is Vite, not Expo)"
+  },
+  "seed_data_creation": "Tests create ephemeral users prefixed TEST_/*_<uuid8> via /api/auth/register and use HMAC-signed Yoti/OneID webhooks to elevate them to fully-verified adults. No production data touched.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Block 5 verified independently. Test file /app/backend/tests/test_block5_discovery.py is a reusable regression suite. Run: `EXPO_BACKEND_URL=<preview_url> pytest backend/tests/test_block5_discovery.py -v`. Frontend for Skali is Vite (not Expo); the /app/frontend directory only contains a package.json in this env, so browser automation was intentionally skipped.",
+  "rca_of_issue": "N/A — no bugs found."
+}

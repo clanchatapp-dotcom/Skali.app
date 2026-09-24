@@ -119,11 +119,11 @@ MB = 1024 * 1024
 # Per-tier perks from the product spec (§15). Upload caps are practical ceilings
 # ("unlimited" tiers still bounded by storage limits at the infra layer).
 TIER_LIMITS = {
-    'free':     {'pinned': 3, 'bio': 150, 'links': 3,
+    'free':     {'pinned': 3, 'bio': 150, 'links': 3, 'tags': 3,
                  'image': 50 * MB, 'video': 500 * MB, 'audio': 100 * MB, 'doc': 100 * MB},
-    'premium':  {'pinned': 6, 'bio': 300, 'links': 8,
+    'premium':  {'pinned': 6, 'bio': 300, 'links': 8, 'tags': 6,
                  'image': 500 * MB, 'video': 2048 * MB, 'audio': 1024 * MB, 'doc': 2048 * MB},
-    'verified': {'pinned': 6, 'bio': 300, 'links': 9999,
+    'verified': {'pinned': 6, 'bio': 300, 'links': 9999, 'tags': 9,
                  'image': 500 * MB, 'video': 4096 * MB, 'audio': 4096 * MB, 'doc': 2048 * MB},
 }
 
@@ -615,7 +615,7 @@ async def post_out(p: dict, viewer_id: str) -> dict:
     return {
         'id': p['id'], 'tier': p['tier'], 'text': p.get('text', ''),
         'media_url': p.get('media_url'), 'media_type': p.get('media_type'),
-        'tags': p.get('tags', []), 'ai_label': p.get('ai_label', 'none'), 'edited': bool(p.get('edited')), 'edited_count': len(p.get('edit_history', [])), 'pinned': bool(p.get('pinned')), 'can_edit': p['author_id'] == viewer_id, 'created_at': p['created_at'],
+        'tags': p.get('tags', []), 'nsfw': bool(p.get('nsfw')), 'nsfw_tags': p.get('nsfw_tags', []), 'ai_label': p.get('ai_label', 'none'), 'edited': bool(p.get('edited')), 'edited_count': len(p.get('edit_history', [])), 'pinned': bool(p.get('pinned')), 'can_edit': p['author_id'] == viewer_id, 'created_at': p['created_at'],
         'people_tags': people_tags, 'my_tag_status': my_tag_status,
         'like_count': len(p.get('likes', [])), 'liked': liked,
         'likeable': p['tier'] == 'public',
@@ -671,6 +671,7 @@ class PostCreate(BaseModel):
     media_url: Optional[str] = None
     media_type: Optional[str] = None
     tags: Optional[list] = None
+    nsfw_tags: Optional[list] = None    # closed vocab (@NSFW/@GNSFW/@LNSFW/@TNSFW); chosen, not typed
     people_tags: Optional[list] = None  # handles to tag; each requires that person's approval
     ai_label: Optional[str] = 'none'  # none | generated | assisted | altered
 
@@ -1768,10 +1769,39 @@ async def create_post(body: PostCreate, u: dict = Depends(get_current_user)):
     text = (body.text or '').strip()
     if not text and not body.media_url:
         raise HTTPException(400, 'Empty post')
-    tags = [re.sub(r'[^a-z0-9]', '', t.lower())[:20] for t in (body.tags or [])]
-    tags = [t for t in tags if t][:10]
-    if tier == 'inner':
-        tags = []  # spec: no tag field on Tier 3
+    # --- Block 5: freeform SFW tags (normalised + de-duped + per-tier capped + abuse-screened) ---
+    cap = tier_limits(u).get('tags', 3)
+    tags: list = []
+    if tier != 'inner':  # spec: no tag field on Tier 3
+        seen_keys = set()
+        for raw in (body.tags or []):
+            key = normalise_tag(raw)
+            if not key:
+                continue
+            if is_disallowed_tag(key):
+                await _log_abuse_attempt(u, 'tag', str(raw))
+                raise HTTPException(400, "That tag isn't allowed here. Please choose a different word.")
+            if key in seen_keys:
+                continue  # duplicate collapse
+            seen_keys.add(key)
+            tags.append(key)
+            if len(tags) >= cap:
+                break
+    # --- Block 5: closed NSFW selector (chosen from server vocab; adults-only, fail-closed) ---
+    nsfw_tags: list = []
+    if body.nsfw_tags:
+        if tier == 'inner':
+            raise HTTPException(400, 'NSFW tags are not used on Inner Circle posts')
+        vocab = await nsfw_vocab_set()
+        if not is_age_verified_adult(u):
+            raise HTTPException(403, 'Adult (18+) verification is required to label content as NSFW.')
+        for t in body.nsfw_tags:
+            tt = str(t).strip().upper()
+            if not tt.startswith('@'):
+                tt = '@' + tt
+            if tt in vocab and tt not in nsfw_tags:
+                nsfw_tags.append(tt)
+    is_nsfw = bool(nsfw_tags)
     ai_label = body.ai_label if body.ai_label in AI_LABELS else 'none'
     # People-tags: each tagged person must approve before the tag shows publicly.
     people = []
@@ -1790,9 +1820,17 @@ async def create_post(body: PostCreate, u: dict = Depends(get_current_user)):
                        'display_name': tp['display_name'], 'status': 'pending'})
     doc = {'id': str(uuid.uuid4()), 'author_id': u['id'], 'tier': tier, 'text': text,
            'media_url': body.media_url, 'media_type': body.media_type, 'tags': tags,
+           'nsfw_tags': nsfw_tags, 'nsfw': is_nsfw,
            'people_tags': people, 'ai_label': ai_label,
            'likes': [], 'created_at': datetime.now(timezone.utc).isoformat()}
     await db.posts.insert_one(dict(doc))
+    # Block 5: register tags in the registry (dedupe + counts + nsfw flag).
+    if tier == 'public':
+        await register_tags(tags, nsfw=False)
+        await register_tags([t.lstrip('@').lower() for t in nsfw_tags], nsfw=True)
+    # NSFW anywhere on an account routes 100% of its money through CCBill (Block 3).
+    if is_nsfw and not u.get('account_nsfw'):
+        await db.profiles.update_one({'id': u['id']}, {'$set': {'account_nsfw': True}})
     for pt in people:
         await add_activity(pt['user_id'], 'tag_request', u, 'tagged you in a post', doc['id'])
     return await post_out(doc, u['id'])
@@ -4430,4 +4468,278 @@ async def request_payout(u: dict = Depends(require_monetisation)):
         {'$set': {'pending': 0.0}, '$inc': {'paid': amount}})
     payout.pop('_id', None)
     return {'ok': True, 'payout': payout}
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# BLOCK 5 — Discovery: tag registry · closed NSFW selector · Choices · sponsored
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Closed, server-extensible NSFW vocabulary (never user-created). Seeded on boot.
+NSFW_TAG_VOCAB_DEFAULT = ['@NSFW', '@GNSFW', '@LNSFW', '@TNSFW']
+# Freeform explicit/anatomical words that must NOT be typeable as tags — users are
+# redirected to the closed NSFW selector instead. (Slurs are handled by BANNED_WORDS.)
+EXPLICIT_TAG_WORDS = {
+    'porn', 'porno', 'sex', 'sexy', 'nude', 'nudes', 'naked', 'pussy', 'dick', 'cock',
+    'tits', 'boobs', 'anal', 'cum', 'blowjob', 'xxx', 'nsfw', 'gnsfw', 'lnsfw', 'tnsfw',
+    'milf', 'hentai', 'creampie', 'onlyfans', 'fetish', 'bdsm', 'escort',
+}
+ABUSE_WATCHLIST_THRESHOLD = 3  # repeated banned-tag attempts -> silent auto-watchlist
+
+
+def normalise_tag(name: str) -> str:
+    """lowercase + de-leet + strip non-alnum + light singularise. Powers 'similar tags exist'."""
+    s = re.sub(r'[^a-z0-9]', '', (name or '').lower().translate(_LEET))[:30]
+    if len(s) > 3 and s.endswith('s') and not s.endswith('ss'):
+        s = s[:-1]  # singularise (cats -> cat)
+    return s
+
+
+def is_disallowed_tag(key: str) -> bool:
+    """True if a freeform tag key is an explicit/anatomical term or a slur (banned)."""
+    return key in EXPLICIT_TAG_WORDS or contains_banned(key)
+
+
+async def _log_abuse_attempt(u: dict, kind: str, raw: str):
+    """Silent log of a blocked hate/explicit attempt. The offending word is never shown
+    back to the user. Repeated attempts auto-add the account to the moderation watchlist
+    (NOT an auto-strike — that stays a human decision)."""
+    await db.abuse_log.insert_one({
+        'id': str(uuid.uuid4()), 'user_id': u['id'], 'handle': u.get('handle'),
+        'kind': kind, 'raw': (raw or '')[:100],
+        'created_at': datetime.now(timezone.utc).isoformat()})
+    cnt = await db.abuse_log.count_documents({'user_id': u['id']})
+    if cnt >= ABUSE_WATCHLIST_THRESHOLD:
+        prof = await db.profiles.find_one({'id': u['id']}, {'watchlisted': 1})
+        if prof and not prof.get('watchlisted'):
+            await db.profiles.update_one({'id': u['id']}, {'$set': {
+                'watchlisted': True, 'watch_reason': 'repeated blocked-tag attempts (auto)',
+                'watched_by': 'system', 'watched_at': datetime.now(timezone.utc).isoformat()}})
+
+
+async def nsfw_vocab_set() -> set:
+    doc = await db.config.find_one({'_id': 'nsfw_vocab'})
+    return set((doc or {}).get('tags') or NSFW_TAG_VOCAB_DEFAULT)
+
+
+async def register_tags(keys: list, nsfw: bool):
+    for key in keys:
+        if not key:
+            continue
+        await db.tags.update_one({'normalised_key': key},
+            {'$set': {'name': key, 'nsfw_flag': nsfw,
+                      'updated_at': datetime.now(timezone.utc).isoformat()},
+             '$setOnInsert': {'id': str(uuid.uuid4()), 'created_at': datetime.now(timezone.utc).isoformat()},
+             '$inc': {'post_count': 1}}, upsert=True)
+
+
+@app.on_event('startup')
+async def _seed_nsfw_vocab():
+    try:
+        if not await db.config.find_one({'_id': 'nsfw_vocab'}):
+            await db.config.insert_one({'_id': 'nsfw_vocab', 'tags': NSFW_TAG_VOCAB_DEFAULT})
+    except Exception as e:
+        log.warning('nsfw vocab seed skipped: %s', e)
+
+
+@app.get('/api/nsfw-tags')
+async def get_nsfw_tags(u: dict = Depends(get_current_user)):
+    """The closed NSFW vocabulary — visible ONLY to age-verified adults with Comfort-Zone
+    NSFW ON. Everyone else gets an empty list (namespace invisible)."""
+    cz = {**COMFORT_ZONE_DEFAULTS, **(u.get('comfort_zone') or {})}
+    if not is_age_verified_adult(u) or cz.get('nsfw') is not True:
+        return {'tags': [], 'eligible': False}
+    return {'tags': sorted(await nsfw_vocab_set()), 'eligible': True}
+
+
+class NsfwVocabAdd(BaseModel):
+    tag: str
+
+
+@app.post('/api/admin/nsfw-tags')
+async def add_nsfw_tag(body: NsfwVocabAdd, a: dict = Depends(require_full_admin)):
+    """Extend the closed NSFW vocabulary (server-side only; never user-created)."""
+    tag = body.tag.strip().upper()
+    if not tag.startswith('@'):
+        tag = '@' + tag
+    tag = '@' + re.sub(r'[^A-Z]', '', tag[1:])
+    if len(tag) < 2:
+        raise HTTPException(400, 'Invalid NSFW tag')
+    cur = sorted(await nsfw_vocab_set() | {tag})
+    await db.config.update_one({'_id': 'nsfw_vocab'}, {'$set': {'tags': cur}}, upsert=True)
+    return {'tags': cur}
+
+
+@app.get('/api/tags/similar')
+async def tags_similar(q: str = '', u: dict = Depends(get_current_user)):
+    """'Similar tags exist' — normalise the query and return existing SFW tags that collapse
+    to the same/near key, so people reuse tags instead of creating duplicates."""
+    key = normalise_tag(q)
+    if not key:
+        return {'query': q, 'normalised': '', 'matches': []}
+    matches = []
+    prefix = key[:3]
+    async for t in db.tags.find({'nsfw_flag': False,
+                                 'normalised_key': {'$regex': f'^{re.escape(prefix)}'}},
+                                {'_id': 0}).sort('post_count', -1).limit(10):
+        matches.append({'tag': t['normalised_key'], 'post_count': t.get('post_count', 0),
+                        'exact': t['normalised_key'] == key})
+    return {'query': q, 'normalised': key, 'matches': matches}
+
+
+@app.get('/api/tags/trending')
+async def tags_trending(u: dict = Depends(get_current_user)):
+    out = []
+    async for t in db.tags.find({'nsfw_flag': False}, {'_id': 0}).sort('post_count', -1).limit(20):
+        out.append({'tag': t['normalised_key'], 'post_count': t.get('post_count', 0)})
+    return {'tags': out}
+
+
+# --------------------------- Choices (opt-in discovery + sponsored) ---------------------------
+
+@app.post('/api/choices/opt-in')
+async def choices_opt_in(u: dict = Depends(get_current_user)):
+    new = not bool(u.get('choices_opt_in'))
+    await db.profiles.update_one({'id': u['id']}, {'$set': {'choices_opt_in': new}})
+    return {'opt_in': new}
+
+
+class SponsorBody(BaseModel):
+    post_id: str
+    topics: Optional[list] = None
+    label: Optional[str] = 'Sponsored'
+
+
+@app.post('/api/sponsored')
+async def create_sponsored(body: SponsorBody, u: dict = Depends(require_monetisation)):
+    """Promote one of YOUR public posts into Choices. Verified creators only; labelled;
+    NSFW is not sponsored by default (only shown to eligible adults if the post is NSFW)."""
+    if effective_role(u) not in {'super_admin', 'co_admin'} and not is_identity_verified(u):
+        raise HTTPException(403, 'Sponsored posts are for verified accounts only')
+    post = await db.posts.find_one({'id': body.post_id, 'author_id': u['id']})
+    if not post:
+        raise HTTPException(404, 'Post not found')
+    if post.get('tier') != 'public':
+        raise HTTPException(400, 'Only public posts can be sponsored')
+    topics = [normalise_tag(t) for t in (body.topics or post.get('tags') or []) if normalise_tag(t)][:6]
+    doc = {'id': str(uuid.uuid4()), 'creator_id': u['id'], 'post_id': body.post_id,
+           'topics': topics, 'label': (body.label or 'Sponsored')[:24],
+           'nsfw': bool(post.get('nsfw')), 'active': True,
+           'created_at': datetime.now(timezone.utc).isoformat()}
+    await db.sponsored_posts.insert_one(dict(doc))
+    doc.pop('_id', None)
+    return doc
+
+
+@app.get('/api/choices')
+async def choices(u: dict = Depends(get_current_user)):
+    """Opt-in, tag-driven discovery layer — separate from My Feed and the ONLY place
+    sponsored posts appear. NSFW content only surfaces for eligible (age-verified, NSFW-on) adults."""
+    if not u.get('choices_opt_in'):
+        return {'opt_in': False, 'posts': [], 'sponsored': []}
+    cz = {**COMFORT_ZONE_DEFAULTS, **(u.get('comfort_zone') or {})}
+    eligible_nsfw = is_age_verified_adult(u) and cz.get('nsfw') is True
+    hidden = await hidden_author_ids(u['id'])
+    # Topic set: followed interests + trending tags.
+    keys = {_norm_interest(x) for x in (u.get('interests') or []) if _norm_interest(x)}
+    if len(keys) < 3:
+        async for t in db.tags.find({'nsfw_flag': False}, {'_id': 0}).sort('post_count', -1).limit(10):
+            keys.add(t['normalised_key'])
+    posts = []
+    q = {'tier': 'public'}
+    if keys:
+        q['tags'] = {'$in': list(keys)}
+    async for p in db.posts.find(q).sort('created_at', -1).limit(120):
+        if p['author_id'] == u['id'] or p['author_id'] in hidden:
+            continue
+        if p.get('nsfw') and not eligible_nsfw:
+            continue  # NSFW namespace invisible to unverified/minors/NSFW-off
+        posts.append(await post_out(p, u['id']))
+        if len(posts) >= 40:
+            break
+    # Sponsored (labelled), verified-only, topic-targeted, no NSFW by default.
+    sponsored = []
+    async for s in db.sponsored_posts.find({'active': True}, {'_id': 0}).sort('created_at', -1).limit(30):
+        if s.get('nsfw') and not eligible_nsfw:
+            continue
+        post = await db.posts.find_one({'id': s['post_id']})
+        if not post or post['author_id'] in hidden or not await can_view(u['id'], post):
+            continue
+        po = await post_out(post, u['id'])
+        po['sponsored'] = True
+        po['sponsor_label'] = s.get('label', 'Sponsored')
+        sponsored.append(po)
+        if len(sponsored) >= 5:
+            break
+    return {'opt_in': True, 'posts': posts, 'sponsored': sponsored}
+
+
+# --------------------------- Creator offers + public storefront ---------------------------
+
+class CreatorOffers(BaseModel):
+    inner_circle_enabled: Optional[bool] = None
+    tiers: Optional[list] = None        # [{tier:1|2|3, price:float(<=cap)}]
+    accepts_tips: Optional[bool] = None
+
+
+@app.put('/api/creator/offers')
+async def set_creator_offers(body: CreatorOffers, u: dict = Depends(require_monetisation)):
+    upd = {}
+    if body.inner_circle_enabled is not None:
+        upd['inner_circle_enabled'] = bool(body.inner_circle_enabled)
+    if body.accepts_tips is not None:
+        upd['accepts_tips'] = bool(body.accepts_tips)
+    if body.tiers is not None:
+        clean = []
+        for t in body.tiers:
+            try:
+                tn = int(t.get('tier'))
+                price = round(float(t.get('price')), 2)
+            except Exception:
+                continue
+            if tn in INNER_CIRCLE_TIERS and 0 < price <= INNER_CIRCLE_TIERS[tn]:
+                clean.append({'tier': tn, 'price': price})
+        upd['inner_circle_tiers'] = clean
+    if upd:
+        await db.profiles.update_one({'id': u['id']}, {'$set': {'offers': {**(u.get('offers') or {}), **upd}}})
+    prof = await db.profiles.find_one({'id': u['id']}, {'_id': 0})
+    return (prof or {}).get('offers') or {}
+
+
+def _default_offers() -> dict:
+    return {'inner_circle_enabled': True, 'accepts_tips': True,
+            'inner_circle_tiers': [{'tier': t, 'price': p} for t, p in INNER_CIRCLE_TIERS.items()]}
+
+
+@app.get('/api/creators/{handle}/offers')
+async def creator_offers(handle: str, u: dict = Depends(get_current_user)):
+    """What a fan can buy from this creator: Inner Circle tiers + tips. Empty if the creator
+    isn't verified/monetisation-enabled."""
+    prof = await resolve_profile(handle, {'_id': 0})
+    if not prof:
+        raise HTTPException(404, 'Creator not found')
+    if not monetisation_ok(prof):
+        return {'monetisation_enabled': False, 'inner_circle_enabled': False,
+                'accepts_tips': False, 'tiers': []}
+    offers = prof.get('offers') or _default_offers()
+    tiers = offers.get('inner_circle_tiers') or _default_offers()['inner_circle_tiers']
+    return {'monetisation_enabled': True,
+            'inner_circle_enabled': offers.get('inner_circle_enabled', True),
+            'accepts_tips': offers.get('accepts_tips', True),
+            'account_nsfw': account_is_nsfw(prof),
+            'tiers': tiers if offers.get('inner_circle_enabled', True) else []}
+
+
+@app.get('/api/creators/{handle}/shop')
+async def creator_public_shop(handle: str, u: dict = Depends(get_current_user)):
+    """Public storefront — a verified creator's active products fans can browse and buy."""
+    prof = await resolve_profile(handle, {'_id': 0})
+    if not prof:
+        raise HTTPException(404, 'Creator not found')
+    if not monetisation_ok(prof):
+        return {'monetisation_enabled': False, 'products': []}
+    products = []
+    async for p in db.shop_products.find({'creator_id': prof['id'], 'active': True}, {'_id': 0}).sort('created_at', -1):
+        products.append(p)
+    return {'monetisation_enabled': True, 'products': products}
 

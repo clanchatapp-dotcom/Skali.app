@@ -96,6 +96,22 @@ Capacitor (web/Android) frontend, FastAPI (Python 3.11) + MongoDB (Motor) backen
 - Verified: 20/20 local + 14/14 independent tests (iteration_3.json). Vite production build passes.
 
 
+## Implemented (session 4) — Block 5 Discovery + subscribe/tip + storefront ✅ (2026-09-24)
+- **Tag registry** (`tags` collection): normalise (lowercase/de-leet/singularise) + dedupe; per-tier cap on `POST /api/posts`
+  (Free 3 / Premium 6 / Verified 9 via `TIER_LIMITS.tags`); `GET /api/tags/similar` ("similar tags exist") + `/api/tags/trending`.
+- **Closed NSFW selector** (`@NSFW/@GNSFW/@LNSFW/@TNSFW`, server-extensible via `config.nsfw_vocab`, `POST /api/admin/nsfw-tags`):
+  `nsfw_tags` on posts are chosen from the vocab, adults-only (fail-closed); explicit freeform tags blocked; `GET /api/nsfw-tags`
+  returns empty for ineligible users. NSFW post → `nsfw:true` + flips `account_nsfw` (→CCBill routing).
+- **Hate/abuse**: banned/explicit tag attempts return a generic warning (word hidden) + silent `abuse_log`; ≥3 attempts → auto-watchlist (no auto-strike).
+- **Choices** (`/choices` page + `GET /api/choices`, `POST /api/choices/opt-in`): opt-in, tag-driven discovery, separate from the feed;
+  the ONLY place labelled sponsored posts appear. **Sponsored** (`POST /api/sponsored`, verified-only, topic-targeted, no NSFW to ineligible).
+- **Subscribe/Tip**: Profile shows Subscribe (Inner Circle tiers) + Tip buttons → `POST /api/checkout/session` → off-app checkout URL.
+  Creator offers configurable (`PUT /api/creator/offers`, `GET /api/creators/{h}/offers`).
+- **Creator storefront**: public Shop tab on Profile (`GET /api/creators/{h}/shop`) → Buy → `POST /api/shop/order/{id}`.
+- **Verified badge** field added to serializers (blue tick). New nav item "Choices" (Compass).
+- Verified: 18/18 local + 15/15 independent tests (iteration_4.json). Vite production build passes.
+
+
 ## Next tasks
 1. Owner: rotate secrets + set Render env + kick off Yoti/OneID + CCBill applications (long lead).
 2. Block 2 — verification spine (one block per session).

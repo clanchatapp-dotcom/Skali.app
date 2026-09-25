@@ -12,7 +12,7 @@ function Composer({ onPosted }: { onPosted: () => void }) {
   const [tagInput, setTagInput] = useState('')
   const [people, setPeople] = useState<string[]>([])
   const [peopleInput, setPeopleInput] = useState('')
-  const [media, setMedia] = useState<{ url: string; type: string } | null>(null)
+  const [mediaList, setMediaList] = useState<{ url: string; type: string }[]>([])
   const [busy, setBusy] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [aiLabel, setAiLabel] = useState('none')
@@ -45,7 +45,7 @@ function Composer({ onPosted }: { onPosted: () => void }) {
         setUploading(true)
         try {
           const r = await api.upload(new File([blob], `voice-${Date.now()}.webm`, { type: 'audio/webm' }))
-          setMedia({ url: r.signed_url, type: 'audio' })
+          setMediaList(prev => [...prev, { url: r.signed_url, type: 'audio' }].slice(0, 10))
         } catch {
           alert('Upload failed')
         } finally {
@@ -77,43 +77,50 @@ function Composer({ onPosted }: { onPosted: () => void }) {
   }
 
   const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0]
-    if (!f) return
+    const files = Array.from(e.target.files || [])
+    if (!files.length) return
 
     setUploading(true)
 
     try {
-      const r = await api.upload(f)
-      setMedia({ url: r.signed_url, type: r.media_type })
+      const uploaded: { url: string; type: string }[] = []
+      for (const f of files) {
+        const r = await api.upload(f)
+        uploaded.push({ url: r.signed_url, type: r.media_type })
+      }
+      setMediaList(prev => [...prev, ...uploaded].slice(0, 10))
     } catch {
       alert('Upload failed')
     } finally {
       setUploading(false)
+      e.target.value = ''
     }
   }
 
   const submit = async () => {
-    if (!text.trim() && !media) return
+    if (!text.trim() && !mediaList.length) return
 
     setBusy(true)
 
     try {
+      const hasVisual = mediaList.some(m => m.type !== 'audio')
       await api.createPost({
         tier,
         text,
-        media_url: media?.url,
-        media_type: media?.type,
+        media: mediaList,
+        media_url: mediaList[0]?.url,
+        media_type: mediaList[0]?.type,
         tags,
         nsfw_tags: nsfwTags,
         people_tags: people,
-        ai_label: media ? aiLabel : 'none'
+        ai_label: hasVisual ? aiLabel : 'none'
       })
 
       setText('')
       setTags([])
       setNsfwTags([])
       setPeople([])
-      setMedia(null)
+      setMediaList([])
       setAiLabel('none')
       setTagInput('')
       setPeopleInput('')
@@ -196,27 +203,31 @@ function Composer({ onPosted }: { onPosted: () => void }) {
             className="w-full bg-ink border border-edge rounded-xl px-4 py-3 outline-none focus:border-brand resize-none"
           />
 
-          {/* Media preview */}
-          {media && (
-            <div className="relative mt-2 inline-block">
-              {media.type === 'video'
-                ? <video src={media.url} className="rounded-xl max-h-48" />
-                : media.type === 'audio'
-                ? <audio src={media.url} controls className="mt-1 w-64 max-w-full" />
-                : <img src={media.url} className="rounded-xl max-h-48" />
-              }
-
-              <button
-                onClick={() => setMedia(null)}
-                className="absolute top-1 right-1 h-7 w-7 grid place-items-center rounded-full bg-black/70"
-              >
-                <X className="h-4 w-4" />
-              </button>
+          {/* Media preview (gallery) */}
+          {mediaList.length > 0 && (
+            <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
+              {mediaList.map((m, i) => (
+                <div key={i} className="relative shrink-0">
+                  {m.type === 'video'
+                    ? <video src={m.url} className="rounded-xl h-28 w-28 object-cover" />
+                    : m.type === 'audio'
+                    ? <div className="h-28 w-44 rounded-xl bg-ink border border-edge grid place-items-center px-2"><audio src={m.url} controls className="w-full" /></div>
+                    : <img src={m.url} className="rounded-xl h-28 w-28 object-cover" />
+                  }
+                  <button
+                    onClick={() => setMediaList(prev => prev.filter((_, j) => j !== i))}
+                    className="absolute top-1 right-1 h-6 w-6 grid place-items-center rounded-full bg-black/70"
+                    aria-label="Remove media"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
             </div>
           )}
 
           {/* AI label */}
-          {media && media.type !== 'audio' && (
+          {mediaList.some(m => m.type !== 'audio') && (
             <div className="mt-2">
               <div className="text-xs text-slate-400 mb-1">
                 Is this image AI?
@@ -329,14 +340,15 @@ function Composer({ onPosted }: { onPosted: () => void }) {
               ref={fileRef}
               type="file"
               accept="image/*,video/*"
+              multiple
               hidden
               onChange={onFile}
             />
 
             <button
               onClick={() => fileRef.current?.click()}
-              disabled={uploading}
-              className="h-10 w-10 grid place-items-center rounded-xl bg-white/5 border border-edge hover:bg-white/10"
+              disabled={uploading || mediaList.length >= 10}
+              className="h-10 w-10 grid place-items-center rounded-xl bg-white/5 border border-edge hover:bg-white/10 disabled:opacity-50"
             >
               {uploading
                 ? <Loader2 className="h-5 w-5 animate-spin" />
@@ -365,7 +377,7 @@ function Composer({ onPosted }: { onPosted: () => void }) {
 
             <button
               onClick={submit}
-              disabled={busy || (!text.trim() && !media)}
+              disabled={busy || (!text.trim() && !mediaList.length)}
               className="ml-auto px-6 py-2.5 rounded-xl bg-gradient-to-r from-brand to-violet-600 font-semibold disabled:opacity-50"
             >
               {busy ? 'Posting…' : 'Post'}

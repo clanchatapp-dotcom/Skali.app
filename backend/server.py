@@ -615,6 +615,7 @@ async def post_out(p: dict, viewer_id: str) -> dict:
     return {
         'id': p['id'], 'tier': p['tier'], 'text': p.get('text', ''),
         'media_url': p.get('media_url'), 'media_type': p.get('media_type'),
+        'media': p.get('media') or ([{'url': p['media_url'], 'type': p.get('media_type') or 'image'}] if p.get('media_url') else []),
         'tags': p.get('tags', []), 'nsfw': bool(p.get('nsfw')), 'nsfw_tags': p.get('nsfw_tags', []), 'ai_label': p.get('ai_label', 'none'), 'edited': bool(p.get('edited')), 'edited_count': len(p.get('edit_history', [])), 'pinned': bool(p.get('pinned')), 'can_edit': p['author_id'] == viewer_id, 'created_at': p['created_at'],
         'people_tags': people_tags, 'my_tag_status': my_tag_status,
         'like_count': len(p.get('likes', [])), 'liked': liked,
@@ -670,6 +671,7 @@ class PostCreate(BaseModel):
     text: Optional[str] = ''
     media_url: Optional[str] = None
     media_type: Optional[str] = None
+    media: Optional[list] = None  # [{url, type}] gallery of photos/videos (+ audio)
     tags: Optional[list] = None
     nsfw_tags: Optional[list] = None    # closed vocab (@NSFW/@GNSFW/@LNSFW/@TNSFW); chosen, not typed
     people_tags: Optional[list] = None  # handles to tag; each requires that person's approval
@@ -1826,8 +1828,27 @@ async def create_post(body: PostCreate, u: dict = Depends(get_current_user)):
         seen_ids.add(tp['id'])
         people.append({'user_id': tp['id'], 'handle': tp['handle'],
                        'display_name': tp['display_name'], 'status': 'pending'})
+    # Normalise media into a list of {url, type}. Accept the new `media` gallery
+    # array, or fall back to the legacy single media_url/media_type. media_url/type
+    # are also stored (first item) so older readers/filters keep working.
+    raw_media = body.media if body.media else ([{'url': body.media_url, 'type': body.media_type}] if body.media_url else [])
+    media_items = []
+    for m in (raw_media or [])[:10]:
+        try:
+            murl = (m.get('url') or '').strip()
+            mtype = (m.get('type') or '').strip().lower()
+        except Exception:
+            continue
+        if not murl:
+            continue
+        if mtype not in ('image', 'video', 'audio'):
+            mtype = 'image'
+        media_items.append({'url': murl, 'type': mtype})
+    first = media_items[0] if media_items else None
     doc = {'id': str(uuid.uuid4()), 'author_id': u['id'], 'tier': tier, 'text': text,
-           'media_url': body.media_url, 'media_type': body.media_type, 'tags': tags,
+           'media_url': first['url'] if first else None,
+           'media_type': first['type'] if first else None,
+           'media': media_items, 'tags': tags,
            'nsfw_tags': nsfw_tags, 'nsfw': is_nsfw,
            'people_tags': people, 'ai_label': ai_label,
            'likes': [], 'created_at': datetime.now(timezone.utc).isoformat()}

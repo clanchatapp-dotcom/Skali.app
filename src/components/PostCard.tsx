@@ -32,6 +32,8 @@ export default function PostCard({ post, onDelete }: { post: any; onDelete?: (id
   }
   const [showHistory, setShowHistory] = useState(false)
   const [lightbox, setLightbox] = useState(false)
+  const [lbIndex, setLbIndex] = useState(0)
+  const [activeIdx, setActiveIdx] = useState(0)
   const [history, setHistory] = useState<any | null>(null)
   const openHistory = async () => {
     setShowHistory(true)
@@ -45,6 +47,11 @@ export default function PostCard({ post, onDelete }: { post: any; onDelete?: (id
   const tier = TIER[(post.tier as TierKey)] || TIER.public
   const TierIcon = tier.icon
   const a = post.author || { id: '', handle: 'unknown', display_name: 'Unknown' }
+  const mediaItems: { url: string; type: string }[] = (post.media && post.media.length)
+    ? post.media
+    : (post.media_url ? [{ url: post.media_url, type: post.media_type || 'image' }] : [])
+  const visuals = mediaItems.filter(m => m.type !== 'audio')
+  const audios = mediaItems.filter(m => m.type === 'audio')
 
   const react = async (emoji: string) => {
     setPick(false)
@@ -118,42 +125,67 @@ export default function PostCard({ post, onDelete }: { post: any; onDelete?: (id
           {post.my_tag_status === 'pending' && !post.can_edit && (
             <div className="mt-1.5 text-xs text-amber-400">You're tagged here — approve or reject it from your Activity.</div>
           )}
-          {post.media_url && (
+          {visuals.length > 0 && (
             <div className="relative mt-3">
-              {post.media_type === 'audio' ? (
-                <audio src={post.media_url} controls className="w-full mt-1" />
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setLightbox(true)}
-                  data-testid="post-media-open"
-                  aria-label="Enlarge media"
-                  className="relative block w-full cursor-zoom-in rounded-xl overflow-hidden"
-                >
-                  {post.media_type === 'video' ? (
-                    <>
-                      <video src={post.media_url} muted playsInline preload="metadata" className="max-h-96 w-full object-cover pointer-events-none" />
-                      <span className="absolute inset-0 grid place-items-center">
-                        <span className="h-14 w-14 rounded-full bg-black/60 grid place-items-center">
-                          <Play className="h-7 w-7 text-white ml-0.5" />
+              <div
+                className="flex overflow-x-auto snap-x snap-mandatory rounded-xl"
+                onScroll={(e) => {
+                  const el = e.currentTarget
+                  const i = Math.round(el.scrollLeft / Math.max(1, el.clientWidth))
+                  if (i !== activeIdx) setActiveIdx(i)
+                }}
+              >
+                {visuals.map((m, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => { setLbIndex(i); setLightbox(true) }}
+                    data-testid={i === 0 ? 'post-media-open' : `post-media-open-${i}`}
+                    aria-label="Enlarge media"
+                    className="relative shrink-0 w-full snap-center cursor-zoom-in"
+                  >
+                    {m.type === 'video' ? (
+                      <>
+                        <video src={m.url} muted playsInline preload="metadata" className="max-h-96 w-full object-cover pointer-events-none" />
+                        <span className="absolute inset-0 grid place-items-center">
+                          <span className="h-14 w-14 rounded-full bg-black/60 grid place-items-center">
+                            <Play className="h-7 w-7 text-white ml-0.5" />
+                          </span>
                         </span>
-                      </span>
-                    </>
-                  ) : (
-                    <img src={post.media_url} className="max-h-96 object-cover w-full" />
-                  )}
-                </button>
-              )}
+                      </>
+                    ) : (
+                      <img src={m.url} className="max-h-96 w-full object-cover" />
+                    )}
+                  </button>
+                ))}
+              </div>
+
               {post.ai_label && post.ai_label !== 'none' && (
                 <span className="absolute top-2 left-2 text-[11px] font-semibold px-2 py-1 rounded-md bg-black/70 text-white backdrop-blur flex items-center gap-1">
                   <Sparkles className="h-3 w-3 text-brand" />
                   {post.ai_label === 'generated' ? 'AI Generated' : post.ai_label === 'assisted' ? 'AI Assisted' : 'AI Altered'}
                 </span>
               )}
+
+              {visuals.length > 1 && (
+                <>
+                  <span className="absolute top-2 right-2 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-black/60 text-white">{activeIdx + 1}/{visuals.length}</span>
+                  <div className="mt-2 flex justify-center gap-1.5">
+                    {visuals.map((_, i) => (
+                      <span key={i} className={`h-1.5 rounded-full transition-all ${i === activeIdx ? 'w-4 bg-brand' : 'w-1.5 bg-white/30'}`} />
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           )}
-          {lightbox && post.media_url && post.media_type !== 'audio' && (
-            <MediaLightbox url={post.media_url} type={post.media_type} onClose={() => setLightbox(false)} />
+
+          {audios.map((m, i) => (
+            <audio key={i} src={m.url} controls className="w-full mt-2" />
+          ))}
+
+          {lightbox && visuals.length > 0 && (
+            <MediaLightbox items={visuals} index={lbIndex} onClose={() => setLightbox(false)} />
           )}
           {post.tags?.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">

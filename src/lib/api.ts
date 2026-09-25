@@ -14,16 +14,16 @@ const stepUpHeaders = (): Record<string, string> => stepUpSecret ? { 'X-Step-Up'
 
 // Deployed FastAPI backend on Render. Used as the fallback inside the native app
 // (which has no same-origin API) so the APK works out of the box even if the
-// REACT_APP_API_URL build var isn't provided.
+// REACT_APP_BACKEND_URL build var isn't provided.
 const NATIVE_API_FALLBACK = 'https://skali-backend.onrender.com'
 
 // Resolve the backend base URL:
-//  - If REACT_APP_API_URL is baked at build time, always use it (web deploy + APK).
+//  - If REACT_APP_BACKEND_URL is baked at build time, always use it (web deploy + APK).
 //  - Else, inside the native Capacitor shell -> use the deployed Render backend.
 //  - Else (sandbox dev / same-origin web) -> "" so requests hit relative "/api"
 //    (Vite proxy in dev, same origin in single-host deploys).
 function computeApiBase(): string {
-  const fromEnv = (((import.meta as any).env.REACT_APP_API_URL || '') as string).replace(/\/$/, '')
+  const fromEnv = (((import.meta as any).env.REACT_APP_BACKEND_URL || '') as string).replace(/\/$/, '')
   if (fromEnv) return fromEnv
   try { if (Capacitor.isNativePlatform()) return NATIVE_API_FALLBACK } catch { /* not native */ }
   return ''

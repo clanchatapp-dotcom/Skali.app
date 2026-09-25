@@ -30,26 +30,46 @@ export default function AuthCallback() {
     const fail = (m: string) => { if (!cancelled) { setFailed(true); setMsg(m) } }
 
     ;(async () => {
-      const params = new URLSearchParams(window.location.search)
-      const oauthErr = params.get('error_description')
-      const code = params.get('code')
-      if (oauthErr) return fail(oauthErr)
-      if (!code) return fail('Missing authorization code')
+      try {
+        const params = new URLSearchParams(window.location.search)
+        const oauthErr = params.get('error_description')
+        const code = params.get('code')
+        if (oauthErr) return fail(oauthErr)
+        if (!code) return fail('Missing authorization code')
 
-      const { data, error } = await exchangeOnce(code)
-      if (error) return fail('Could not complete sign-in. Please try again.')
-      if (data.session?.access_token) setToken(data.session.access_token)
+        const { data, error } = await exchangeOnce(code)
+        if (error) {
+          // Surface the REAL Supabase error instead of a generic message so the
+          // actual cause is visible (console + on-screen). The most common one is
+          // a PKCE "code verifier" mismatch: sign-in was started on a different
+          // origin (e.g. www.skaliapp.com) than the one Supabase redirected back
+          // to (apex skaliapp.com), so the stored code_verifier isn't found.
+          console.error('[AuthCallback] exchangeCodeForSession failed:', error)
+          const verifierIssue = /verifier|code challenge|pkce/i.test(error.message || '')
+          return fail(
+            verifierIssue
+              ? 'Sign-in could not be completed on this domain. Make sure you always start and finish on the same address (both www and non-www must be allowed). Details: ' + error.message
+              : 'Could not complete sign-in: ' + (error.message || 'unknown error'),
+          )
+        }
+        if (data.session?.access_token) setToken(data.session.access_token)
 
-      // Load the profile BEFORE leaving this screen. If we navigate while the
-      // auth context still has user === null, App renders <Login /> and the
-      // sign-in looks like it silently bounced back to the login page.
-      const user = await refresh()
-      if (!user) {
-        // Signed in with Google, but our own API would not accept the token.
-        // Say so instead of dropping the user on the login screen with no clue.
-        return fail('Signed in with Google, but this app could not verify your session. Please try again.')
+        // Load the profile BEFORE leaving this screen. If we navigate while the
+        // auth context still has user === null, App renders <Login /> and the
+        // sign-in looks like it silently bounced back to the login page.
+        const user = await refresh()
+        if (!user) {
+          // Signed in with Google, but our own API would not accept the token.
+          // Say so instead of dropping the user on the login screen with no clue.
+          return fail('Signed in with Google, but this app could not verify your session. Please try again.')
+        }
+        if (!cancelled) navigate('/', { replace: true })
+      } catch (e: any) {
+        // A thrown (rejected) exchange used to be unhandled, leaving the page
+        // stuck on "Completing sign-in…" with no feedback. Surface it instead.
+        console.error('[AuthCallback] unexpected error:', e)
+        fail('Could not complete sign-in: ' + (e?.message || String(e)))
       }
-      if (!cancelled) navigate('/', { replace: true })
     })()
 
     return () => { cancelled = true }

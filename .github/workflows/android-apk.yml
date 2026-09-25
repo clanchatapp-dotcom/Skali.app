@@ -1,0 +1,98 @@
+name: Android Debug APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Enable Yarn
+        run: corepack enable || npm i -g yarn
+
+      # Vite bakes REACT_APP_* at build time. Public values fall back to defaults;
+      # secrets (anon key, backend URL) come from repo Settings > Secrets and variables > Actions.
+      - name: Write frontend .env
+        run: |
+          cat > .env <<EOF
+          REACT_APP_SUPABASE_URL=${{ secrets.REACT_APP_SUPABASE_URL || 'https://ixahrtibbpjruggivjik.supabase.co' }}
+          REACT_APP_SUPABASE_ANON_KEY=${{ secrets.REACT_APP_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml4YWhydGliYnBqcnVnZ2l2amlrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk0MDI2NjMsImV4cCI6MjEwNDk3ODY2M30.4yKosj4HuCrPp5Rw1KZ9rGejkzkQdWJAHTO9-QEuCTU' }}
+          REACT_APP_GOOGLE_WEB_CLIENT_ID=${{ secrets.REACT_APP_GOOGLE_WEB_CLIENT_ID || '572913753788-il245hv6t2tss0bc097c4jfk4cumpii8.apps.googleusercontent.com' }}
+          REACT_APP_API_URL=${{ secrets.REACT_APP_API_URL || 'https://skali-backend.onrender.com' }}
+          EOF
+
+      - name: Install deps
+        run: yarn install --frozen-lockfile || yarn install
+
+      - name: Build web
+        run: yarn build
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: ''
+
+      - name: Install SDK packages
+        run: |
+          yes | sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "platforms;android-35" "build-tools;35.0.0" >/dev/null || true
+
+      - name: Capacitor sync (adds android if missing)
+        run: |
+          if [ ! -d android ]; then npx cap add android; fi
+          npx cap sync android
+
+      # The debug keystore is committed at android/app/debug.keystore and wired via
+      # signingConfigs.debug in build.gradle, so the Google sign-in SHA-1 is STABLE
+      # across every build — no secret needed.
+      - name: Confirm committed debug keystore
+        run: |
+          echo "Signing with committed keystore: android/app/debug.keystore"
+          keytool -list -v -keystore android/app/debug.keystore -alias androiddebugkey -storepass android 2>/dev/null | grep -E "SHA1:|SHA256:" || echo "keystore present (fingerprint read skipped)"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Build debug APK
+        working-directory: android
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Echo signing SHA-1
+        if: always()
+        run: |
+          KS=android/app/debug.keystore
+          echo "==================== DEBUG SIGNING FINGERPRINT ===================="
+          if [ -f "$KS" ]; then
+            keytool -list -v -keystore "$KS" -alias androiddebugkey -storepass android 2>/dev/null \
+              | grep -E "SHA1:|SHA256:" || echo "Could not read fingerprints from $KS"
+            echo "-------------------------------------------------------------------"
+            echo "Register the SHA1 above in Google Cloud Console (Android OAuth client)."
+            echo "It MUST stay the same across builds for Google Sign-In to keep working."
+          else
+            echo "::warning::No keystore found at $KS after build. Gradle may have used a per-run key; Google Sign-In will fail until this SHA-1 is registered."
+          fi
+          echo "==================================================================="
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: skali-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

@@ -1,0 +1,30 @@
+{
+  "summary": "Block 4 (Creator Hub) + verified-badge serializer independently verified against the external preview URL. 14/14 pytest cases green in 7.66s. Coverage: (a) gating — all 7 /api/creator/* endpoints return 403 for an unverified user and 200 once identity+age webhooks flip monetisation_enabled, (b) Overview after a signed Inner Circle checkout + tip: revenue_this_month>0, new_subs_this_month>=1, tips_this_month>0, active_subscribers>=1, growth_pct=100 (no prior month), pending_payout>0, (c) Subscribers list contains the buyer handle with active>=1 and churn/renewals fields, (d) Shop end-to-end: POST /api/creator/shop/products (digital) -> POST /api/shop/order/{id} routes psp=stripe for SFW creator with checkout_url -> signed stripe checkout.completed marks order fulfilment_status='delivered' and grants buyer a 'download' entitlement; DELETE soft-deletes and hides from shop list, (e) NSFW routing: after /api/account/nsfw-flip a new shop order routes psp='ccbill', (f) Finance totals carry gross/vat/psp_fee/skali_fee/creator_net; /export.csv is text/csv starting 'date,product,psp'; /tax-docs monthly issuer contains 'Skali', (g) Payout settings weekly/gbp persist and surface via GET /api/creator/payouts with pending/available/paid + payout_kyc, (h) FIRST payout request returns HTTP 202 with kyc_required=true + kyc_url and flips payout_kyc.status to 'pending' (no money moved), (i) Verified badge: GET /api/users/{handle}.verified=true for identity-verified creator, false for unverified user; author.verified=true on posts by verified creator, (j) Regression: /api/me, /api/feed?scope=public, /api/entitlements unaffected. No blocking issues.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": [], "react_native_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_block4_creator_hub.py",
+    "/app/test_reports/pytest/block4.xml"
+  ],
+  "action_items": [
+    "Non-blocking: server.py is now 4434 lines. Consider splitting Block 4 (Creator Hub: overview/subscribers/shop/finance/payouts) into its own module for maintainability. Guideline is <700 lines/file.",
+    "Non-blocking: payout-settings PUT returns the raw payout_balances doc (which may be empty {}). Consider returning the same shape as GET /api/creator/payouts for UI parity (schedule/currency echoed back explicitly)."
+  ],
+  "critical_code_review_comments": [
+    "Webhook signature verification (Yoti/OneID/Stripe/CCBill/Xsolla) uses hmac.compare_digest over EXACT raw body bytes and is fail-closed when the secret env var is empty — correct.",
+    "require_monetisation is uniformly applied to every /api/creator/* endpoint and returns 403 for identity- or age-unverified users; gating suite confirms this on all 7 endpoints.",
+    "First-payout KYC handoff correctly returns 202 with kyc_url and does NOT decrement pending balance; payout_kyc.status flips to 'pending' as designed (Block 4 spec).",
+    "Shop PSP routing uses route_psp(creator) so an NSFW-flipped creator's future orders correctly route to CCBill (verified in test)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_block4_creator_hub.py (new)",
+    "/app/test_reports/pytest/block4.xml (new)",
+    "/app/test_reports/iteration_3.json (new)"
+  ],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "n/a (backend-only per request)"},
+  "seed_data_creation": "Each test registers throwaway TEST_ users via /api/auth/register and creates its own products/subscriptions. No fixture users are seeded outside the built-in super-admin.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Preview URL: https://1364d24c-2629-41c4-b227-b4ccdd97873e.preview.emergentagent.com. Block 4 endpoints + verified badge serializer independently verified. Webhook HMAC secrets in backend/.env (local_yoti_secret, local_oneid_secret, local_stripe_secret). Signature = hex(hmac_sha256(secret, EXACT raw body bytes)). Use scope='module' fixture to share a verified creator + a buyer's inner_circle + tip when testing Overview/Subscribers/Finance together — avoids re-verifying per test.",
+  "rca_of_issue": "n/a — no failures."
+}

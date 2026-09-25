@@ -1,0 +1,170 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* --- Mobile safe areas (Capacitor / notches / status bar / system nav) --- */
+/* Sticky page headers sit BELOW the status bar (time, battery, signal). */
+.sticky.top-0 {
+  padding-top: calc(0.75rem + env(safe-area-inset-top)) !important;
+}
+
+/* The app body background fills the status-bar inset so it doesn't look cut off. */
+body {
+  background: rgb(5 5 7);
+}
+
+:root {
+  --ink: 5 5 7;
+  --panel: 13 13 19;
+  --panel2: 20 20 28;
+  --edge: 32 33 46;
+  --brand: 109 94 252;
+  --brand-600: 91 77 240;
+  --brand-700: 74 61 214;
+  --fg: 231 232 240;
+  --glow1: rgba(109, 94, 252, .16);
+  --glow2: rgba(124, 58, 237, .12);
+  --scroll: #26283a;
+}
+
+html.light {
+  --ink: 255 255 255;
+  --panel: 247 247 249;
+  --panel2: 240 240 243;
+  --edge: 224 224 230;
+  --fg: 17 17 20;
+  --glow1: rgba(0, 0, 0, .035);
+  --glow2: rgba(0, 0, 0, .02);
+  --scroll: #cfcfd6;
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+html,
+body {
+  overflow-x: hidden;
+  max-width: 100%;
+}
+
+#root {
+  overflow-x: hidden;
+  width: 100%;
+}
+
+* {
+  min-width: 0;
+}
+
+img,
+video,
+audio,
+canvas,
+svg {
+  max-width: 100%;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(900px 500px at 15% -8%, var(--glow1) 0%, transparent 55%),
+    radial-gradient(800px 480px at 100% 0%, var(--glow2) 0%, transparent 50%),
+    rgb(var(--ink));
+  color: rgb(var(--fg));
+  -webkit-font-smoothing: antialiased;
+}
+
+/* --- Hide scrollbars but keep scrolling --- */
+html,
+body,
+#root,
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+#root::-webkit-scrollbar,
+*::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+[data-lk-theme='default'] {
+  --lk-bg: #0d0d13;
+}
+
+/* --- Light theme: remap the app's fixed slate/white utilities to black & white --- */
+html.light .text-white {
+  color: #0b0b0f !important;
+}
+
+html.light .text-slate-200 {
+  color: #1f2430 !important;
+}
+
+html.light .text-slate-300 {
+  color: #2b3040 !important;
+}
+
+html.light .text-slate-400 {
+  color: #565c6c !important;
+}
+
+html.light .text-slate-500 {
+  color: #6b7180 !important;
+}
+
+html.light .text-slate-600 {
+  color: #9096a4 !important;
+}
+
+html.light .bg-white\/5 {
+  background-color: rgba(0, 0, 0, .04) !important;
+}
+
+html.light .bg-white\/10 {
+  background-color: rgba(0, 0, 0, .06) !important;
+}
+
+html.light .bg-white\/15 {
+  background-color: rgba(0, 0, 0, .08) !important;
+}
+
+html.light .bg-white\/20 {
+  background-color: rgba(0, 0, 0, .10) !important;
+}
+
+html.light .hover\:bg-white\/5:hover {
+  background-color: rgba(0, 0, 0, .04) !important;
+}
+
+html.light .hover\:bg-white\/10:hover {
+  background-color: rgba(0, 0, 0, .06) !important;
+}
+
+html.light .hover\:bg-white\/20:hover {
+  background-color: rgba(0, 0, 0, .10) !important;
+}
+
+/* Dark input backdrops become subtle light fills in light mode (keep modal scrims dark) */
+html.light .bg-black\/40 {
+  background-color: rgba(0, 0, 0, .04) !important;
+}
+
+html.light .bg-black\/60 {
+  background-color: rgba(0, 0, 0, .05) !important;
+}

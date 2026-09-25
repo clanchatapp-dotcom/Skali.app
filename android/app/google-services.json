@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "572913753788",
+    "project_id": "skaliapp-e0dee",
+    "storage_bucket": "skaliapp-e0dee.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:572913753788:android:4f20aff4e46ed27ce93ab9",
+        "android_client_info": {
+          "package_name": "app.skali.mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCGQms8RFi0rOez-WkS9W2ndjAC98MVlD0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

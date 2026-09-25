@@ -4,7 +4,7 @@
 services:
   # ---------------- Backend (FastAPI) ----------------
   - type: web
-    name: skali-backend
+    name: clanchat-backend
     runtime: python
     rootDir: backend
     plan: starter
@@ -61,7 +61,7 @@ services:
 
   # ---------------- Frontend (static Vite SPA) ----------------
   - type: web
-    name: skali-web
+    name: clanchat-web
     runtime: static
     buildCommand: yarn install && yarn build
     staticPublishPath: dist
@@ -79,5 +79,5 @@ services:
         # Android client. Must match nativeGoogle.ts + the android-apk.yml default,
         # otherwise native Google sign-in throws [16] "reauth failed".
         value: 572913753788-il245hv6t2tss0bc097c4jfk4cumpii8.apps.googleusercontent.com
-      - key: REACT_APP_API_URL   # absolute backend URL (e.g. https://skali-backend.onrender.com)
+      - key: REACT_APP_BACKEND_URL   # absolute backend URL — must match your real Render backend hostname
         sync: false

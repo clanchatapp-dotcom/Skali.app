@@ -322,53 +322,6 @@ function Composer({ onPosted }: { onPosted: () => void }) {
             </div>
           )}
 
-          {/* People tagging */}
-          <div className="mt-2">
-            <div className="flex flex-wrap gap-1.5 items-center">
-
-              {people.map(h => (
-                <span
-                  key={h}
-                  className="text-xs text-violet-300 bg-violet-500/10 px-2 py-1 rounded-full flex items-center gap-1"
-                >
-                  @{h}
-
-                  <button
-                    onClick={() => setPeople(people.filter(x => x !== h))}
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </span>
-              ))}
-
-              <input
-                value={peopleInput}
-                onChange={e => {
-                  const v = e.target.value
-
-                  if (v.endsWith(' ') || v.endsWith(',')) {
-                    addPerson(v)
-                  } else {
-                    setPeopleInput(v)
-                  }
-                }}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    addPerson(peopleInput)
-                  }
-                }}
-                placeholder={
-                  people.length
-                    ? ''
-                    : 'tag people (@handle — they must approve)…'
-                }
-                className="bg-transparent text-sm outline-none flex-1 min-w-[120px] py-1"
-              />
-
-            </div>
-          </div>
-
           {/* Media + Post */}
           <div className="flex items-center gap-2 mt-3">
 

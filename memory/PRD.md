@@ -125,3 +125,8 @@ Imported the Skali.app repo into /app (Vite React SPA at root, `/app/frontend` l
 
 ### Preview env config added to backend/.env (dev-only, prod uses Render env)
 SUPABASE_JWT_SECRET (local auth signing), SEED_ADMIN_PASSWORD, DB_NAME=skali, DM_ENC_KEY. Uploads still require the owner's Supabase (not in preview).
+
+## Follow-up session — composer cleanup, media lightbox, bot removal ✅ (2026-06)
+1. **Removed people-tag bar** from `Feed.tsx` composer (the "tag people (@handle — they must approve)…" input). Left `people` state intact so `createPost` still sends `people_tags: []`.
+2. **Tap-to-enlarge media** — new `src/components/MediaLightbox.tsx` (fullscreen viewer: X button, tap-backdrop, Escape, and swipe-down-to-dismiss with drag/opacity). Wired into `PostCard.tsx`: inline media is now a tappable preview (video shows a play badge) that opens the lightbox; audio stays an inline `<audio>` player. Covers Feed + Profile (both use PostCard).
+3. **Removed all bots + their messages** — `_bootstrap()` in `backend/server.py` no longer seeds the `system-skali` "Skali" bot/demo posts; instead it PURGES `system-skali` + demo handles (skali/alice/bob/teen) and their content via `_purge_user` on every startup (self-heals after redeploy). Verified: 0 bot profiles, 0 bot posts remain; feed shows only real users.

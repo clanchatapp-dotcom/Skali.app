@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Trash2, Flag, MessageCircle, Send, CornerDownRight, SmilePlus, Sparkles, History, X, Pin } from 'lucide-react'
+import { Trash2, Flag, MessageCircle, Send, CornerDownRight, SmilePlus, Sparkles, History, X, Pin, Play } from 'lucide-react'
 import { api } from '../lib/api'
 import { Avatar, TIER, TierKey, timeAgo, Linkify } from '../lib/ui'
 import RoleBadge from './RoleBadge'
 import AccountBadge from './AccountBadge'
+import MediaLightbox from './MediaLightbox'
 
 const REPORT_CATS = ['harassment', 'hate', 'self_harm', 'inappropriate', 'unlabelled_ai', 'impersonation', 'underage', 'spam', 'csam', 'other']
 const RX: Record<string, string> = { like: '👍', love: '❤️', haha: '😂', wow: '😮', sad: '😢', angry: '😡' }
@@ -30,6 +31,7 @@ export default function PostCard({ post, onDelete }: { post: any; onDelete?: (id
     try { const r = await api.pinPost(post.id); setPinned(r.pinned) } catch (e: any) { alert(e.message) }
   }
   const [showHistory, setShowHistory] = useState(false)
+  const [lightbox, setLightbox] = useState(false)
   const [history, setHistory] = useState<any | null>(null)
   const openHistory = async () => {
     setShowHistory(true)
@@ -118,11 +120,30 @@ export default function PostCard({ post, onDelete }: { post: any; onDelete?: (id
           )}
           {post.media_url && (
             <div className="relative mt-3">
-              {post.media_type === 'video'
-                ? <video src={post.media_url} controls className="rounded-xl max-h-96 w-full" />
-                : post.media_type === 'audio'
-                ? <audio src={post.media_url} controls className="w-full mt-1" />
-                : <img src={post.media_url} className="rounded-xl max-h-96 object-cover w-full" />}
+              {post.media_type === 'audio' ? (
+                <audio src={post.media_url} controls className="w-full mt-1" />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setLightbox(true)}
+                  data-testid="post-media-open"
+                  aria-label="Enlarge media"
+                  className="relative block w-full cursor-zoom-in rounded-xl overflow-hidden"
+                >
+                  {post.media_type === 'video' ? (
+                    <>
+                      <video src={post.media_url} muted playsInline preload="metadata" className="max-h-96 w-full object-cover pointer-events-none" />
+                      <span className="absolute inset-0 grid place-items-center">
+                        <span className="h-14 w-14 rounded-full bg-black/60 grid place-items-center">
+                          <Play className="h-7 w-7 text-white ml-0.5" />
+                        </span>
+                      </span>
+                    </>
+                  ) : (
+                    <img src={post.media_url} className="max-h-96 object-cover w-full" />
+                  )}
+                </button>
+              )}
               {post.ai_label && post.ai_label !== 'none' && (
                 <span className="absolute top-2 left-2 text-[11px] font-semibold px-2 py-1 rounded-md bg-black/70 text-white backdrop-blur flex items-center gap-1">
                   <Sparkles className="h-3 w-3 text-brand" />
@@ -130,6 +151,9 @@ export default function PostCard({ post, onDelete }: { post: any; onDelete?: (id
                 </span>
               )}
             </div>
+          )}
+          {lightbox && post.media_url && post.media_type !== 'audio' && (
+            <MediaLightbox url={post.media_url} type={post.media_type} onClose={() => setLightbox(false)} />
           )}
           {post.tags?.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">

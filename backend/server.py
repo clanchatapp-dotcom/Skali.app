@@ -788,25 +788,23 @@ async def startup():
 
 
 async def _bootstrap():
-    sys_id = 'system-skali'
+    # Remove any seeded "bot"/demo accounts (and every post/message they created) on
+    # every startup, so they never reappear in the feed — not even after a redeploy.
+    # (Previously a 'Skali' system account + demo posts and alice/bob/teen demo users
+    # were seeded here.)
     try:
-        if not await db.profiles.find_one({'id': sys_id}):
-            await db.profiles.insert_one({
-                'id': sys_id, 'handle': 'skali', 'display_name': 'Skali',
-                'real_name': None, 'email': None, 'bio': 'Your place to gather. Your circle. Your rules. No bullshit.',
-                'links': ['skali.app'], 'avatar_url': None, 'account_type': 'verified',
-                'follow_mode': 'open', 'dm_open': False,
-                'created_at': datetime.now(timezone.utc).isoformat()})
-            for txt, tags in [
-                ('Welcome to Skali — the responsible adult social network. No algorithm. No ads in your feed. Just your people.', ['welcome', 'skali']),
-                ('Three tiers, one gathering: Public, Followers, and your Inner Circle. You decide who sees what.', ['privacy', 'tiers']),
-            ]:
-                await db.posts.insert_one({
-                    'id': str(uuid.uuid4()), 'author_id': sys_id, 'tier': 'public',
-                    'text': txt, 'media_url': None, 'media_type': None, 'tags': tags,
-                    'likes': [], 'created_at': datetime.now(timezone.utc).isoformat()})
+        bot_ids = {'system-skali'}
+        async for p in db.profiles.find(
+            {'$or': [{'id': 'system-skali'},
+                     {'handle': {'$in': ['skali', 'alice', 'bob', 'teen']}}]},
+            {'id': 1}):
+            bot_ids.add(p['id'])
+        for bid in bot_ids:
+            await _purge_user(bid)
+        # Belt-and-braces: drop any stray posts left behind by an old system account.
+        await db.posts.delete_many({'author_id': {'$in': list(bot_ids)}})
     except Exception as e:
-        log.warning('seed skipped: %s', e)
+        log.warning('bot cleanup skipped: %s', e)
     try:
         await ensure_bucket()
     except Exception as e:

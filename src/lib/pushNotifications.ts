@@ -1,57 +1,43 @@
-// src/lib/pushNotifications.ts
-//
-// Fix 3:
-//   - The call-accept handoff (reading the MainActivity intent extras that
-//     IncomingCallActivity wrote) is now registered at bootstrap via
-//     bootstrapCallHandoff(), which runs unconditionally before any React
-//     tree mounts.  configurePush() is still called from Layout on mount,
-//     but it no longer owns the cold-start accept path.
-//
-//   - A tiny CallAcceptBus buffers a cold-start accept event so that even
-//     if Layout hasn't mounted yet, the event is replayed the moment
-//     Layout registers its listener.
-//
-// Fix 2 (companion):
-//   IncomingCallActivity no longer fires a skali:// URI deep link.
-//   Instead it puts plain extras on the MainActivity intent:
-//     skali_call_action = "accept"
-//     room / from_handle / media / call_id
-//   The Capacitor Bridge exposes these via window.__SKALI_CALL_EXTRAS__
-//   (injected by MainActivity.java, see companion fix there), and we read
-//   them here at bootstrap time.
 
 import { Capacitor, registerPlugin } from '@capacitor/core'
-import { App as CapApp }             from '@capacitor/app'
-import { Preferences }               from '@capacitor/preferences'
-import { api }                       from './api'
-import { supabase }                  from './supabase'
+import { App as CapApp } from '@capacitor/app'
+import { Preferences } from '@capacitor/preferences'
+import { api } from './api'
+import { supabase } from './supabase'
+import { getWebMessaging } from './firebase'
+import { getToken, onMessage } from 'firebase/messaging'
 
 // ---------------------------------------------------------------------------
-// CallAcceptBus  –  tiny pub/sub that buffers one event across mount timing
+// CallAcceptBus — buffers a cold-start call accept until Layout subscribes
 // ---------------------------------------------------------------------------
-type CallAcceptDetail = { room: string; peer: string; media: 'audio' | 'video' }
+
+type CallAcceptDetail = {
+  room: string
+  peer: string
+  media: 'audio' | 'video'
+}
 
 const CallAcceptBus = (() => {
-  let _buffered: CallAcceptDetail | null = null
-  let _listener: ((d: CallAcceptDetail) => void) | null = null
+  let buffered: CallAcceptDetail | null = null
+  let listener: ((detail: CallAcceptDetail) => void) | null = null
 
   return {
-    /** Called by bootstrap or deep-link handler when a cold-start accept arrives */
     emit(detail: CallAcceptDetail) {
-      if (_listener) {
-        _listener(detail)
-      } else {
-        _buffered = detail           // Layout hasn't mounted yet — buffer it
-      }
+      if (listener) listener(detail)
+      else buffered = detail
     },
-    /** Called by Layout on mount; replays buffered event immediately if any */
-    subscribe(fn: (d: CallAcceptDetail) => void) {
-      _listener = fn
-      if (_buffered) {
-        fn(_buffered)
-        _buffered = null
+
+    subscribe(fn: (detail: CallAcceptDetail) => void) {
+      listener = fn
+
+      if (buffered) {
+        fn(buffered)
+        buffered = null
       }
-      return () => { _listener = null }
+
+      return () => {
+        listener = null
+      }
     },
   }
 })()
@@ -59,13 +45,14 @@ const CallAcceptBus = (() => {
 export { CallAcceptBus }
 
 // ---------------------------------------------------------------------------
-// Persist auth + API base so the native decline receiver can call the API
+// Persist auth + API base for the native decline receiver
 // ---------------------------------------------------------------------------
+
 async function persistCallAuth() {
   try {
     const apiBase =
       (import.meta as any).env?.VITE_API_URL ||
-      (window as any).__SKALI_API_BASE__       ||
+      (window as any).__SKALI_API_BASE__ ||
       window.location.origin
 
     const { data } = await supabase.auth.getSession()
@@ -73,103 +60,245 @@ async function persistCallAuth() {
 
     await Preferences.configure({ group: 'skali_call_prefs' })
     await Preferences.set({ key: 'api_base_url', value: apiBase })
-    await Preferences.set({ key: 'auth_token',   value: token  })
-  } catch { /* best effort */ }
+    await Preferences.set({ key: 'auth_token', value: token })
+  } catch {
+    // Best effort; native call handling must not block app startup.
+  }
 }
 
-supabase.auth.onAuthStateChange(() => { persistCallAuth() })
+supabase.auth.onAuthStateChange(() => {
+  void persistCallAuth()
+})
 
 // ---------------------------------------------------------------------------
-// Read intent extras that IncomingCallActivity put on the MainActivity intent.
-// MainActivity.java injects them as window.__SKALI_CALL_EXTRAS__ before the
-// WebView is created (see companion MainActivity fix).
+// Read call-accept extras injected by MainActivity.java
 // ---------------------------------------------------------------------------
+
 function readIntentExtras(): CallAcceptDetail | null {
   try {
     const extras = (window as any).__SKALI_CALL_EXTRAS__
     if (!extras || extras.skali_call_action !== 'accept') return null
-    const room  = extras.room        as string
-    const peer  = extras.from_handle as string
+
+    const room = extras.room as string
+    const peer = extras.from_handle as string
     const media = (extras.media || 'video') as 'audio' | 'video'
+
     if (!room || !peer) return null
+
     return { room, peer, media }
-  } catch { return null }
+  } catch {
+    return null
+  }
 }
 
 // ---------------------------------------------------------------------------
-// bootstrapCallHandoff  –  must run at app startup, before Layout mounts.
-// Called from main.tsx (or App.tsx) once, unconditionally.
+// Bootstrap call handoff before React mounts
 // ---------------------------------------------------------------------------
-let _bootstrapped = false
+
+let bootstrapped = false
 
 export function bootstrapCallHandoff() {
-  if (_bootstrapped) return
-  _bootstrapped = true
+  if (bootstrapped) return
+  bootstrapped = true
 
   if (Capacitor.getPlatform() !== 'android') return
 
-  // 1. Cold-start: MainActivity was launched by IncomingCallActivity with extras
   const fromExtras = readIntentExtras()
+
   if (fromExtras) {
     CallAcceptBus.emit(fromExtras)
   }
 
-  // 2. Warm: app resumed via appUrlOpen (kept for forward-compat / PWA mode)
   CapApp.addListener('appUrlOpen', ({ url }) => {
     try {
-      const u = new URL(url)
-      if (u.protocol !== 'skali:' || u.hostname !== 'call') return
-      const room  = u.searchParams.get('room')  || ''
-      const peer  = u.searchParams.get('peer')  || ''
-      const media = (u.searchParams.get('media') || 'video') as 'audio' | 'video'
+      const parsed = new URL(url)
+
+      if (parsed.protocol !== 'skali:' || parsed.hostname !== 'call') {
+        return
+      }
+
+      const room = parsed.searchParams.get('room') || ''
+      const peer = parsed.searchParams.get('peer') || ''
+      const media = (parsed.searchParams.get('media') || 'video') as
+        | 'audio'
+        | 'video'
+
       if (!room || !peer) return
+
       CallAcceptBus.emit({ room, peer, media })
-    } catch { /* ignore */ }
+    } catch {
+      // Ignore malformed deep links.
+    }
   })
 }
 
 // ---------------------------------------------------------------------------
-// configurePush  –  called from Layout after mount (needs user context)
+// Push configuration
 // ---------------------------------------------------------------------------
-let configured = false
 
-export async function configurePush() {
-  if (configured) return
-  if (Capacitor.getPlatform() !== 'android') return
-  configured = true
+let androidConfigured = false
+let webConfigured = false
 
-  persistCallAuth()
+const WEB_VAPID_KEY =
+  'BNppFLpE9-QB8wTzHjv9ddGM7wO0GAns6bIhOJQsc0PI7DP8gAWlSS7OcWVVrPz06WHqjho9Qy_p2iAKoY9DJYs'
+
+// ---------------------------------------------------------------------------
+// Android push — preserve the existing Capacitor implementation
+// ---------------------------------------------------------------------------
+
+async function configureAndroidPush() {
+  if (androidConfigured) return
+  androidConfigured = true
+
+  void persistCallAuth()
 
   try {
-    const { PushNotifications } = await import('@capacitor/push-notifications')
+    const { PushNotifications } = await import(
+      '@capacitor/push-notifications'
+    )
 
     try {
       await PushNotifications.createChannel({
-        id:          'high_priority',
-        name:        'Messages & Calls',
+        id: 'high_priority',
+        name: 'Messages & Calls',
         description: 'Instant alerts for new messages, media and calls',
-        importance:  5,
-        visibility:  1,
-        sound:       'default',
-        vibration:   true,
-        lights:      true,
+        importance: 5,
+        visibility: 1,
+        sound: 'default',
+        vibration: true,
+        lights: true,
       })
-    } catch { /* ignore */ }
+    } catch {
+      // The channel may already exist.
+    }
 
-    let perm = await PushNotifications.checkPermissions()
-    if (perm.receive !== 'granted') perm = await PushNotifications.requestPermissions()
-    if (perm.receive !== 'granted') { configured = false; return }
+    let permission = await PushNotifications.checkPermissions()
+
+    if (permission.receive !== 'granted') {
+      permission = await PushNotifications.requestPermissions()
+    }
+
+    if (permission.receive !== 'granted') {
+      androidConfigured = false
+      return
+    }
 
     await PushNotifications.addListener('registration', async (token) => {
       api.registerPush(token.value, 'android').catch(() => {})
-      persistCallAuth()
+      void persistCallAuth()
     })
-    await PushNotifications.addListener('registrationError',           () => {})
-    await PushNotifications.addListener('pushNotificationReceived',    () => {})
-    await PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
-      const data: any = action?.notification?.data || {}
-      if (data?.url) { try { window.location.hash = data.url } catch { /* ignore */ } }
-    })
+
+    await PushNotifications.addListener('registrationError', () => {})
+
+    await PushNotifications.addListener(
+      'pushNotificationReceived',
+      () => {},
+    )
+
+    await PushNotifications.addListener(
+      'pushNotificationActionPerformed',
+      (action) => {
+        const data: any = action?.notification?.data || {}
+
+        if (data?.url) {
+          try {
+            window.location.hash = data.url
+          } catch {
+            // Ignore navigation errors.
+          }
+        }
+      },
+    )
+
     await PushNotifications.register()
-  } catch { configured = false }
+  } catch (error) {
+    console.error('[Push] Android setup failed:', error)
+    androidConfigured = false
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Web push — Firebase Cloud Messaging
+// ---------------------------------------------------------------------------
+
+async function configureWebPush() {
+  if (webConfigured) return
+  webConfigured = true
+
+  try {
+    if (!('serviceWorker' in navigator) || !('Notification' in window)) {
+      webConfigured = false
+      return
+    }
+
+    if (!window.isSecureContext) {
+      console.warn('[Push] Web push requires HTTPS or localhost.')
+      webConfigured = false
+      return
+    }
+
+    const messaging = await getWebMessaging()
+
+    if (!messaging) {
+      webConfigured = false
+      return
+    }
+
+    // Register the service worker used for background notifications.
+    const registration = await navigator.serviceWorker.register(
+      '/firebase-messaging-sw.js',
+    )
+
+    let permission = Notification.permission
+
+    if (permission === 'default') {
+      permission = await Notification.requestPermission()
+    }
+
+    if (permission !== 'granted') {
+      webConfigured = false
+      return
+    }
+
+    const token = await getToken(messaging, {
+      vapidKey: WEB_VAPID_KEY,
+      serviceWorkerRegistration: registration,
+    })
+
+    if (!token) {
+      console.warn('[Push] Firebase did not return a web token.')
+      webConfigured = false
+      return
+    }
+
+    await api.registerPush(token, 'web')
+
+    // Foreground messages are received here. Background messages are handled
+    // by firebase-messaging-sw.js.
+    onMessage(messaging, (payload) => {
+      window.dispatchEvent(
+        new CustomEvent('skali:web-push', { detail: payload }),
+      )
+    })
+  } catch (error) {
+    console.error('[Push] Web setup failed:', error)
+    webConfigured = false
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Public entry point — native Android and browser web push
+// ---------------------------------------------------------------------------
+
+export async function configurePush() {
+  const platform = Capacitor.getPlatform()
+
+  if (platform === 'android') {
+    await configureAndroidPush()
+    return
+  }
+
+  if (platform === 'web') {
+    await configureWebPush()
+  }
 }

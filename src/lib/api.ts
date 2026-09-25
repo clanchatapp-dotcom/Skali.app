@@ -15,7 +15,7 @@ const stepUpHeaders = (): Record<string, string> => stepUpSecret ? { 'X-Step-Up'
 // Deployed FastAPI backend on Render. Used as the fallback inside the native app
 // (which has no same-origin API) so the APK works out of the box even if the
 // REACT_APP_BACKEND_URL build var isn't provided.
-const NATIVE_API_FALLBACK = 'https://skali-backend.onrender.com'
+const NATIVE_API_FALLBACK = 'https://clanchat-backend.onrender.com'
 
 // Resolve the backend base URL:
 //  - If REACT_APP_BACKEND_URL is baked at build time, always use it (web deploy + APK).

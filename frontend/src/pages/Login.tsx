@@ -49,16 +49,13 @@ export default function Login() {
 
   return (
     <div className="min-h-full grid lg:grid-cols-2">
-      <div className="hidden lg:flex flex-col justify-between p-12 relative overflow-hidden">
-        <div className="flex items-center gap-3">
-          <img src="/logo_full.png" alt="Skali" className="h-16 w-auto object-contain drop-shadow-lg" />
-          <span className="text-2xl font-extrabold tracking-tight">Skali</span>
-        </div>
+      <div className="hidden lg:flex flex-col justify-center gap-10 p-12 relative overflow-hidden">
+        <img src="/logo_full.png" alt="Skali" className="h-44 w-auto object-contain self-start drop-shadow-2xl" />
         <div className="space-y-6 max-w-md">
-          <h1 className="text-5xl font-extrabold leading-tight">
-            Your place to <span className="text-transparent bg-clip-text bg-gradient-to-r from-brand to-violet-400">gather</span>.
-          </h1>
-          <p className="text-slate-300 text-lg">No algorithm. No ads in your feed. No toxic metrics. Your circle. Your rules. No bullshit.</p>
+          <p className="text-slate-100 text-3xl font-bold leading-snug">
+            No algorithm. No ads in your feed. No toxic metrics.<br />
+            Your circle. Your rules. <span className="text-transparent bg-clip-text bg-gradient-to-r from-brand to-violet-400">No noise.</span>
+          </p>
           <div className="space-y-3 pt-2">
             {[[Users, 'Three tiers: Public, Followers & Inner Circle'], [Lock, 'Tier-gated, encrypted DMs & calls'], [Sparkles, 'Chronological feed — never an algorithm']].map(([Icon, t]: any, i) => (
               <div key={i} className="flex items-center gap-3 text-slate-200">
@@ -67,8 +64,9 @@ export default function Login() {
               </div>
             ))}
           </div>
+          <p className="text-slate-300 text-lg italic pt-1">Your own personal clubhouse.</p>
         </div>
-        <div className="text-slate-500 text-sm">Skali · web + android</div>
+        <div className="absolute bottom-6 left-12 text-slate-500 text-sm">Skali · web + android</div>
         <div className="absolute -bottom-24 -right-24 h-80 w-80 rounded-full bg-violet-600/20 blur-3xl" />
         <div className="absolute -top-24 -left-16 h-72 w-72 rounded-full bg-brand/20 blur-3xl" />
       </div>

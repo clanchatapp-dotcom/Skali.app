@@ -1,0 +1,32 @@
+{
+  "summary": "Verified the Admin.tsx rules-of-hooks fix. All useState/useEffect hooks (incl. the moved `dz` state at line 54, and later `creators`/`creatorSearch`/`creatorResults`/`support`/`supportThread`/`supportReplyText` at lines 96-101, plus dmAccess at 69, reqHandle at 70) are declared BEFORE the early `return <Navigate to=\"/\" replace />` at line 136. No hooks are called after the early return. Verified in both /app/src/pages/Admin.tsx and the synced /app/frontend/src/pages/Admin.tsx (files are identical). ESLint reports no react-hooks/rules-of-hooks violations. Playwright UI tests passed for all 4 requested scenarios.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Admin page", "issues": ["Danger zone (Promote / Purge demo) is rendered for moderators too, not just full admins. The page itself does render for moderators (`can_moderate` allows it), but production-bootstrap tools arguably should be gated behind `isFull` or `isSuper`. Not part of this review's scope — flagging for awareness."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Admin.tsx is 766 lines — exceeds recommended 700-line threshold; main agent may want to extract DangerZone, DmAccessPanel, RolesPanel, UsersList, SupportModal, DmReviewModal into separate components in a future refactor.",
+    "Several useState declarations are still scattered (lines 69-70 dmAccess/reqHandle, 96-101 creators/support cluster) rather than grouped at the top; this works but is fragile — any future edit that places a new useState below line 136 would re-introduce the exact bug just fixed. Consider grouping all hooks in a `// --- state ---` block right after `useAuth()` and adding an ESLint rule to lint this directory on CI."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only)", "frontend": "100%"},
+  "test_credentials": "sa@test.skali / Test1234! (super_admin), co@test.skali / Test1234! (co_admin), mod@test.skali / Test1234! (moderator). co's role was demoted to 'user' during regression test then restored to 'co_admin' / is_admin=true / can_moderate=true.",
+  "seed_data_creation": "None. Used existing seeded staff accounts from test_credentials.md.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Fix verified. Local vite dev server was started on :3100 proxied to local backend :8001 for testing, then killed. Hooks ordering in Admin.tsx is now correct — all useState/useEffect precede the role-gated early return at line 136. Rules-of-hooks test: logged in as co_admin, visited /admin, demoted role via mongo `db.profiles.updateOne({email:'co@test.skali'},{$set:{role:'user',is_admin:false,can_moderate:false}})`, reloaded; page redirected to / with zero hook errors in console (previously would have thrown 'Rendered fewer hooks than expected'). Audit tab also verified: data-testids audit-log-tab-super_admin / audit-log-tab-co_admin / audit-log-tab-moderator all present.",
+  "test_results_detail": {
+    "eslint_react_hooks_rules_of_hooks": "PASS — `npx eslint src/pages/Admin.tsx` exits 0 with no warnings",
+    "super_admin_loads_admin": "PASS — h1 Admin visible, Danger zone + Promote + Purge buttons rendered, audit tab shows all 3 role tabs",
+    "moderator_loads_admin": "PASS — h1 Admin visible, 'Admins' full-only tab correctly hidden",
+    "co_admin_demotion_regression": "PASS — after mongo demote + page.reload(), URL went /admin -> / and no 'rules of hooks' / 'Rendered fewer hooks' / 'Rendered more hooks' errors appeared in console. Role was restored after test.",
+    "audit_log_tab_testids": "PASS — audit-log-tab-super_admin, audit-log-tab-co_admin, audit-log-tab-moderator all present"
+  },
+  "rca of the issue": "Original bug (now fixed): `const [dz, setDz] = useState(false)` was declared AFTER the early `return <Navigate to=\"/\" replace />`. When a staff member's role was revoked mid-session while they were on /admin, the component would re-render, hit the early-return path, and React would see fewer hooks than the previous render → 'Rendered fewer hooks than expected' crash. Fix: moved `useState` call to line 54, before line 136's early return. Verified by demotion-and-reload regression test — no hook mismatch error observed."
+}

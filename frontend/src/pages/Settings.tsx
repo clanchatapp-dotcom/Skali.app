@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Settings as SettingsIcon, ShieldCheck, MessageCircle, LogOut, Trash2, Loader2, Check, Plus, User as UserIcon, AlertTriangle, Lock, Flame, Sparkles, MessageSquare, Swords, Pill, Eye, KeyRound, Bell, Users2, ChevronRight } from 'lucide-react'
+import { Settings as SettingsIcon, ShieldCheck, MessageCircle, LogOut, Trash2, Loader2, Check, Plus, User as UserIcon, AlertTriangle, Lock, Flame, Sparkles, MessageSquare, Swords, Pill, Eye, KeyRound, Bell, Users2, ChevronRight, Bookmark } from 'lucide-react'
 import { api } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { Avatar } from '../lib/ui'
@@ -331,6 +331,15 @@ export default function Settings() {
               <div className="flex-1 min-w-0">
                 <div className="font-medium">Manage connections</div>
                 <div className="text-xs text-slate-500">Followers, Inner Circle, blocked & muted people.</div>
+              </div>
+              <ChevronRight className="h-5 w-5 text-slate-500" />
+            </button>
+
+            <button onClick={() => nav('/saved')} data-testid="settings-open-saved" className="w-full bg-panel border border-edge rounded-2xl p-5 flex items-center gap-3 hover:bg-white/5 transition text-left">
+              <Bookmark className="h-5 w-5 text-brand shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="font-medium">Saved</div>
+                <div className="text-xs text-slate-500">Photos & videos you've saved to this device.</div>
               </div>
               <ChevronRight className="h-5 w-5 text-slate-500" />
             </button>

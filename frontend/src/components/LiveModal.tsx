@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
+import { useNavigate } from 'react-router-dom'
 import {
   LiveKitRoom,
   RoomAudioRenderer,
@@ -12,6 +13,7 @@ import {
 import { ConnectionState, Track } from 'livekit-client'
 import { api, getToken, wsLiveUrl } from '../lib/api'
 import { Avatar } from '../lib/ui'
+import { showToast } from '../lib/toast'
 import {
   X, Loader2, Heart, Send, Radio, Users, Users2, Globe2, Save,
   Mic, MicOff, Video, VideoOff, RotateCcw, Hand,
@@ -48,6 +50,7 @@ function LiveStage({
   const { localParticipant } = useLocalParticipant()
   const connectionState = useConnectionState()
   const connected = connectionState === ConnectionState.Connected
+  const nav = useNavigate()
   // Everyone else in the room. For the host these are the viewers; for a
   // viewer we drop the host so the list is just fellow watchers.
   const remotes = useRemoteParticipants()
@@ -201,6 +204,20 @@ function LiveStage({
       wsRef.current.send(JSON.stringify({ type: 'chat', text: `👋 Hey ${nm}!` }))
     }
   }
+  // Viewer waves back at the host — a quick 👋 into the live chat.
+  const sendWave = () => {
+    if (wsRef.current?.readyState === 1) {
+      wsRef.current.send(JSON.stringify({ type: 'chat', text: '👋' }))
+    }
+  }
+  // Open a viewer's profile (closes the live so the profile is visible).
+  const openProfile = (p: { name?: string; identity: string }) => {
+    const handle = (p.name || '').replace(/^#/, '').trim()
+    if (!handle) return
+    setShowViewers(false)
+    onClose()
+    nav(`/u/${handle}`)
+  }
 
   const toggleMic = async () => {
     try { const on = await localParticipant.setMicrophoneEnabled(!micOn); setMicOn(on) } catch { /* noop */ }
@@ -285,8 +302,11 @@ function LiveStage({
                 const nm = (p.name || p.identity || '').replace(/^#/, '')
                 return (
                   <div key={p.identity} className="flex items-center gap-3 px-2 py-2 rounded-xl hover:bg-white/5">
-                    <Avatar id={p.identity} name={nm} size={36} />
-                    <span className="text-white text-sm font-medium flex-1 truncate">{p.name || nm}</span>
+                    <button onClick={() => openProfile({ name: p.name, identity: p.identity })} data-testid="live-viewer-open"
+                      className="flex items-center gap-3 flex-1 min-w-0 text-left active:opacity-70">
+                      <Avatar id={p.identity} name={nm} size={36} />
+                      <span className="text-white text-sm font-medium truncate">{p.name || nm}</span>
+                    </button>
                     {isHost && (
                       <button onClick={() => greet({ name: p.name, identity: p.identity })} data-testid="live-greet"
                         className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full bg-brand text-white active:scale-95 transition">
@@ -345,6 +365,13 @@ function LiveStage({
                 </button>
                 <button onClick={flipCam} className="h-11 w-11 rounded-full grid place-items-center bg-white/15 text-white shrink-0"><RotateCcw className="h-5 w-5" /></button>
               </>
+            )}
+
+            {!isHost && (
+              <button onClick={() => { sendWave(); showToast('You waved at the host 👋', 'success') }} data-testid="live-wave"
+                className="h-11 w-11 rounded-full grid place-items-center bg-amber-400/20 text-amber-300 shrink-0">
+                <Hand className="h-5 w-5" />
+              </button>
             )}
 
             <button onClick={sendHeart} data-testid="live-heart"

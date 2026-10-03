@@ -5,6 +5,7 @@ import { api } from '../lib/api'
 import { Avatar, ZoomAvatar, TIER, TierKey, timeAgo, Linkify } from '../lib/ui'
 import { saveMedia } from '../lib/saveMedia'
 import { showToast } from '../lib/toast'
+import { recordSaved } from '../lib/savedMedia'
 import RoleBadge from './RoleBadge'
 import AdultBadge from './AdultBadge'
 import AccountBadge from './AccountBadge'
@@ -65,6 +66,7 @@ export default function PostCard({ post, onDelete }: { post: any; onDelete?: (id
     try {
       const r = await saveMedia(m.url)
       setSaveState('done'); setTimeout(() => setSaveState('idle'), 1800)
+      recordSaved(m.url, m.type)
       showToast(r === 'saved' ? 'Saved to your device' : 'Opened — long-press to save', r === 'saved' ? 'success' : 'info')
     } catch {
       setSaveState('idle'); showToast('Could not save this media', 'error')

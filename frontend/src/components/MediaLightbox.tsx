@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { X, ChevronLeft, ChevronRight, Download, Check, Loader2 } from 'lucide-react'
 import { saveMedia } from '../lib/saveMedia'
 import { showToast } from '../lib/toast'
+import { recordSaved } from '../lib/savedMedia'
 
 type Item = { url: string; type: string }
 
@@ -54,6 +55,7 @@ export default function MediaLightbox({ items, index = 0, onClose, allowSave = f
     try {
       const r = await saveMedia(cur.url)
       setSaveState('done'); setTimeout(() => setSaveState('idle'), 1800)
+      recordSaved(cur.url, cur.type)
       showToast(r === 'saved' ? 'Saved to your device' : 'Opened — long-press to save', r === 'saved' ? 'success' : 'info')
     } catch {
       setSaveState('idle'); showToast('Could not save this media', 'error')

@@ -110,3 +110,17 @@ Verified by testing agent (iteration_17.json — all PASS).
 
 Notes/backlog (non-blocking): `PostCard` uses one shared `saveState` for all media items (fine for single active image); native gallery save still needs `@capacitor/filesystem` at build time; live stage (and thus the viewer list in action) only testable on a real device/build with camera+mic.
 
+
+
+---
+
+## Iteration — 2026-10-03 (Saved Album, Tap-to-Profile in live list, Wave Back)
+
+Verified by testing agent (iteration_18.json — all PASS).
+
+- **Saved Album:** new `src/lib/savedMedia.ts` (localStorage key `cc_saved_media`, `getSaved`/`recordSaved`/`removeSaved`/`clearSaved`, fires `cc-saved-changed`). New page `src/pages/Saved.tsx` (route `/saved`, linked from Settings → `settings-open-saved`): 3-col grid (`saved-grid`), tap item opens the zoomable `MediaLightbox`, per-item remove (`saved-remove-N`), `Clear all` with confirm, and an empty state. Every successful save in `PostCard`/`MediaLightbox` now calls `recordSaved`.
+- **Tap To Profile (live list):** in the live viewer panel, each row's name/avatar is a button (`live-viewer-open`) → `openProfile` strips the `#` from the LiveKit participant name, closes the live modal, and navigates to `/u/{handle}`.
+- **Wave Back:** viewers (non-host) get a Wave button (`live-wave`) in the live bottom controls that sends `👋` to the host over the live WS and shows a toast. Host-side Greet (`live-greet`) unchanged.
+
+Note: tap-to-profile and wave-back live in the broadcasting stage, which needs camera+mic — only fully testable on a real device/build.
+

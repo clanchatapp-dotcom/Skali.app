@@ -71,3 +71,9 @@ USER ACTIONS STILL REQUIRED:
 - Built transparent full SKALI lockup (monogram + SKALI + "YOUR PLACE TO GATHER") at public/logo_full.png (script: scripts/build_full_logo.py).
 - Pointed login header (src/pages/Login.tsx, both left + mobile card) and app sidebar top (src/components/Layout.tsx) to /logo_full.png; kept the "Skali" text label as requested. Mirrored in frontend/src.
 - No existing code removed; only image src + new asset added.
+
+## 2026-10-03 — Deploy fix (livekit)
+- Deploy was failing: backend crashed on startup with ModuleNotFoundError: No module named "livekit" (server.py:27).
+- Fixed by pinning livekit-api==1.2.1 and livekit-protocol==1.1.27 in backend/requirements.txt (farm Dockerfile uses --no-dependencies, so transitive livekit-protocol listed explicitly).
+- Verified by testing agent (iteration_14): backend boots, import resolves, GET /api/ 200, /api/livekit/token routable. Re-triggered deploy.
+- KNOWN CONFIG GAP (unrelated, needs prod secret): SUPABASE_JWT_SECRET is empty in backend/.env -> register/login return 500 (mint_token HS256 empty key). Also needs LIVEKIT_API_KEY/SECRET/URL in prod for calls.

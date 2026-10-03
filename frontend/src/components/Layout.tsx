@@ -340,7 +340,7 @@ export default function Layout() {
 
         <div className="flex items-center gap-2 px-2 py-3">
           <img
-            src="/logo_full.png"
+            src="/logo_mark.png"
             alt="Skali"
             className="h-11 w-auto object-contain"
           />

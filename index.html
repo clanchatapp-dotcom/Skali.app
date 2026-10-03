@@ -26,7 +26,7 @@
       }
       #boot-splash.hide { opacity: 0; pointer-events: none; }
       #boot-splash .bs-mark {
-        width: 104px; height: 104px; object-fit: contain;
+        width: auto; height: 150px; max-width: 72vw; object-fit: contain;
         animation: bootpulse 1.7s ease-in-out infinite;
         filter: drop-shadow(0 12px 40px rgba(124, 131, 163, .25));
       }
@@ -48,9 +48,7 @@
   </head>
   <body>
     <div id="boot-splash">
-      <img class="bs-mark" src="/logo.png" alt="Skali" />
-      <div class="bs-word">Skali</div>
-      <div class="bs-tag">Your place to gather</div>
+      <img class="bs-mark" src="/logo_full.png" alt="Skali — your place to gather" />
     </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>

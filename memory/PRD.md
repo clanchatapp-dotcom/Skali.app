@@ -124,3 +124,14 @@ Verified by testing agent (iteration_18.json — all PASS).
 
 Note: tap-to-profile and wave-back live in the broadcasting stage, which needs camera+mic — only fully testable on a real device/build.
 
+
+
+---
+
+## Iteration — 2026-10-03 (Save From Chat, Saved Filters)
+
+Verified by testing agent (iteration_19.json — PASS; Save-From-Chat end-to-end skipped because strangers can't DM on the Render backend, so it was code/gating verified).
+
+- **Save From Chat (Messages.tsx):** the full-screen DM media viewer now has a Save button (`dm-media-save`) in the header, shown only when `viewer.allowSave && !viewer.viewOnce`. It calls `saveMedia` → `recordSaved` → toast, so saved DM media lands in the Saved area. Respects "Block saving" (allow_save=false) and one-time (view-once) media — no save button in those cases.
+- **Saved Filters (Saved.tsx):** a horizontal chip row (`saved-filter`) with All / Photos / Videos (`saved-filter-all|image|video`), each showing a count; the grid filters accordingly, selected chip highlighted, `saved-filter-empty` when a filter has no items.
+

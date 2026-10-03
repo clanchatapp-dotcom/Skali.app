@@ -32,8 +32,12 @@ import {
   Smile,
   Pencil,
   Plus,
-  Camera
+  Camera,
+  Download
 } from 'lucide-react'
+import { saveMedia } from '../lib/saveMedia'
+import { showToast } from '../lib/toast'
+import { recordSaved } from '../lib/savedMedia'
 
 export default function Messages() {
   const { handle } = useParams()
@@ -1609,14 +1613,33 @@ export default function Messages() {
 
             {/* Larger close button */}
 
-            <button
-              onClick={closeViewer}
-              className="h-12 w-12 grid place-items-center rounded-full bg-white/10 hover:bg-white/20 active:bg-white/25 shrink-0"
-              title="Close"
-              aria-label="Close photo"
-            >
-              <X className="h-7 w-7" />
-            </button>
+            <div className="flex items-center gap-1 shrink-0">
+              {viewer.allowSave && !viewer.viewOnce && viewer.url && (
+                <button
+                  onClick={async () => {
+                    try {
+                      const r = await saveMedia(viewer.url)
+                      recordSaved(viewer.url, viewer.type || 'image')
+                      showToast(r === 'saved' ? 'Saved to your device' : 'Opened — long-press to save', r === 'saved' ? 'success' : 'info')
+                    } catch { showToast('Could not save this media', 'error') }
+                  }}
+                  data-testid="dm-media-save"
+                  className="h-12 w-12 grid place-items-center rounded-full bg-white/10 hover:bg-white/20 active:bg-white/25"
+                  title="Save to device"
+                  aria-label="Save to device"
+                >
+                  <Download className="h-6 w-6" />
+                </button>
+              )}
+              <button
+                onClick={closeViewer}
+                className="h-12 w-12 grid place-items-center rounded-full bg-white/10 hover:bg-white/20 active:bg-white/25"
+                title="Close"
+                aria-label="Close photo"
+              >
+                <X className="h-7 w-7" />
+              </button>
+            </div>
           </div>
 
           {/* Swipeable media area */}

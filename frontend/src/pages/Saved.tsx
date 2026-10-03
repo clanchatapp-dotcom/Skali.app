@@ -9,6 +9,7 @@ export default function Saved() {
   const [items, setItems] = useState<SavedItem[]>(getSaved())
   const [lbIndex, setLbIndex] = useState<number | null>(null)
   const [confirmClear, setConfirmClear] = useState(false)
+  const [filter, setFilter] = useState<'all' | 'image' | 'video'>('all')
 
   useEffect(() => {
     const refresh = () => setItems(getSaved())
@@ -16,6 +17,15 @@ export default function Saved() {
     window.addEventListener('focus', refresh)
     return () => { window.removeEventListener(SAVED_CHANGED_EVENT, refresh); window.removeEventListener('focus', refresh) }
   }, [])
+
+  const videos = items.filter(i => i.type === 'video')
+  const photos = items.filter(i => i.type !== 'video')
+  const shown = filter === 'video' ? videos : filter === 'image' ? photos : items
+  const CHIPS: { key: 'all' | 'image' | 'video'; label: string; count: number }[] = [
+    { key: 'all', label: 'All', count: items.length },
+    { key: 'image', label: 'Photos', count: photos.length },
+    { key: 'video', label: 'Videos', count: videos.length },
+  ]
 
   return (
     <div className="h-full min-h-0 flex flex-col overflow-hidden">
@@ -52,46 +62,74 @@ export default function Saved() {
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-3 gap-1.5" data-testid="saved-grid">
-              {items.map((m, i) => (
-                <div key={m.url} className="relative aspect-square rounded-lg overflow-hidden bg-panel group">
+            <>
+              {/* Photo / video filter */}
+              <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 mb-3" data-testid="saved-filter">
+                {CHIPS.map(c => (
                   <button
-                    type="button"
-                    onClick={() => setLbIndex(i)}
-                    data-testid={`saved-item-${i}`}
-                    className="absolute inset-0 w-full h-full cursor-zoom-in"
+                    key={c.key}
+                    onClick={() => setFilter(c.key)}
+                    data-testid={`saved-filter-${c.key}`}
+                    className={`shrink-0 h-9 px-3.5 rounded-full text-sm font-semibold border transition flex items-center gap-1.5 ${
+                      filter === c.key
+                        ? 'bg-brand text-white border-brand'
+                        : 'bg-panel text-slate-300 border-edge hover:bg-white/5'
+                    }`}
                   >
-                    {m.type === 'video' ? (
-                      <>
-                        <video src={m.url} muted playsInline preload="metadata" className="h-full w-full object-cover" />
-                        <span className="absolute inset-0 grid place-items-center">
-                          <span className="h-10 w-10 rounded-full bg-black/60 grid place-items-center">
-                            <Play className="h-5 w-5 text-white ml-0.5" />
-                          </span>
-                        </span>
-                      </>
-                    ) : (
-                      <img src={m.url} className="h-full w-full object-cover" />
-                    )}
+                    {c.label}
+                    <span className={`text-xs ${filter === c.key ? 'text-white/80' : 'text-slate-500'}`}>{c.count}</span>
                   </button>
-                  <button
-                    onClick={() => removeSaved(m.url)}
-                    data-testid={`saved-remove-${i}`}
-                    aria-label="Remove from saved"
-                    className="absolute top-1.5 right-1.5 h-7 w-7 grid place-items-center rounded-full bg-black/60 text-white hover:bg-rose-600 transition"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
+                ))}
+              </div>
+
+              {shown.length === 0 ? (
+                <div className="bg-panel border border-edge rounded-2xl p-10 text-center" data-testid="saved-filter-empty">
+                  <Bookmark className="h-8 w-8 mx-auto text-slate-600" />
+                  <p className="mt-3 text-sm text-slate-400">No {filter === 'video' ? 'videos' : 'photos'} saved yet.</p>
                 </div>
-              ))}
-            </div>
+              ) : (
+                <div className="grid grid-cols-3 gap-1.5" data-testid="saved-grid">
+                  {shown.map((m, i) => (
+                    <div key={m.url} className="relative aspect-square rounded-lg overflow-hidden bg-panel group">
+                      <button
+                        type="button"
+                        onClick={() => setLbIndex(i)}
+                        data-testid={`saved-item-${i}`}
+                        className="absolute inset-0 w-full h-full cursor-zoom-in"
+                      >
+                        {m.type === 'video' ? (
+                          <>
+                            <video src={m.url} muted playsInline preload="metadata" className="h-full w-full object-cover" />
+                            <span className="absolute inset-0 grid place-items-center">
+                              <span className="h-10 w-10 rounded-full bg-black/60 grid place-items-center">
+                                <Play className="h-5 w-5 text-white ml-0.5" />
+                              </span>
+                            </span>
+                          </>
+                        ) : (
+                          <img src={m.url} className="h-full w-full object-cover" />
+                        )}
+                      </button>
+                      <button
+                        onClick={() => removeSaved(m.url)}
+                        data-testid={`saved-remove-${i}`}
+                        aria-label="Remove from saved"
+                        className="absolute top-1.5 right-1.5 h-7 w-7 grid place-items-center rounded-full bg-black/60 text-white hover:bg-rose-600 transition"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
 
-      {lbIndex !== null && items[lbIndex] && (
+      {lbIndex !== null && shown[lbIndex] && (
         <MediaLightbox
-          items={items.map(m => ({ url: m.url, type: m.type }))}
+          items={shown.map(m => ({ url: m.url, type: m.type }))}
           index={lbIndex}
           allowSave
           onClose={() => setLbIndex(null)}

@@ -16,8 +16,8 @@ httpcore==1.0.9
 httptools==0.8.0
 httpx==0.28.1
 idna==3.19
-livekit-api==1.2.0
-livekit-protocol==1.1.24
+livekit-api==1.2.1
+livekit-protocol==1.1.27
 motor==3.3.1
 multidict==6.7.1
 propcache==0.5.2

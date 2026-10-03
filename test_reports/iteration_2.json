@@ -1,0 +1,27 @@
+{
+  "summary": "Block 2 (Verification spine) + Block 3 (Payments/entitlements) verified end-to-end against the external preview URL. Ran 15 pytest cases covering: unverified /me & monetisation gate, verification/start setting 'pending', unsigned + wrong-signature webhook rejection (401), signed Yoti+OneID webhooks flipping monetisation_enabled=true, hardcoded minor block forcing status 'failed' even on a signed 'verified' payload, entitlements empty for a fresh user, premium checkout (psp=stripe, creator_net=0), inner_circle tier-1 waterfall (net_ex_vat=12.5, skali_fee=1.25, creator_net≈10.82, psp=stripe when SFW), unsigned Stripe webhook rejection, Stripe checkout.completed fulfilling premium entitlement (premium=true), NSFW-flip routing subsequent tip to CCBill with 7.5% skali_fee, chargeback (charge.dispute.created) reducing creator pending_payout, require_monetisation returning 403 for unverified and 200 for verified creator on /api/creator/finance, and regression on register/login/me/feed. 15/15 passed. No blocking issues.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": [], "react_native_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_block2_block3.py",
+    "/app/test_reports/pytest/block2_block3.xml"
+  ],
+  "action_items": [
+    "Non-blocking: TestBlock3Payments.test_inner_circle_quote_and_stripe_when_sfw uses `return {...}` at the end; pytest emits PytestReturnNotNoneWarning. Replace the return with a plain end-of-function (or store on self) to silence. Purely cosmetic."
+  ],
+  "critical_code_review_comments": [
+    "server.py is ~4152 lines — well over the 700-line guideline. Consider splitting Block 2 (verification) and Block 3 (payments/entitlements/webhooks) into their own modules for maintainability. Not blocking.",
+    "Webhook signature verification uses hmac.compare_digest correctly and is fail-closed when the secret env var is empty — good."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_block2_block3.py (new)",
+    "/app/test_reports/pytest/block2_block3.xml (new)",
+    "/app/test_reports/iteration_2.json (new)"
+  ],
+  "success_rate": {"backend": "100% (15/15)", "frontend": "n/a (backend-only per request)"},
+  "seed_data_creation": "Each test registers throwaway TEST_ users via /api/auth/register. No fixture users are seeded outside the built-in super-admin.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Preview URL: https://1364d24c-2629-41c4-b227-b4ccdd97873e.preview.emergentagent.com — Block 2 + Block 3 endpoints and money-waterfall math independently verified. Webhook HMAC secrets loaded from backend/.env (local_yoti_secret, local_oneid_secret, local_stripe_secret, local_ccbill_secret, local_xsolla_secret). Signature = hex(hmac_sha256(secret, EXACT_raw_body)); tests build the JSON body once and send the same bytes.",
+  "rca_of_issue": "n/a — no failures."
+}

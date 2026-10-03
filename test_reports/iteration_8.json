@@ -1,0 +1,24 @@
+{
+  "summary": "Frontend-only verification of DOB age check + www->apex redirect code. All 7 requested checks pass on preview https://birthday-picker-1.preview.emergentagent.com/login. Year list now spans current year (2026) down to 1906 (121 entries). Too-young message shows immediately for years within last 12 (e.g. 2021), and for exactly-under-13 (tomorrow's day/month, year=2013); hides for year 2000 and for exactly-13-today. Leap-year day clamping still works: Feb 2000 max day=29, switching to 2001 clamps 29->28. With too-young DOB plus name/email/password, clicking 'Create account' is blocked by native validity (setCustomValidity on year select) and NO /register network request is sent. /app/index.html head contains a script that redirects location.hostname==='www.skaliapp.com' to https://skaliapp.com preserving pathname+search+hash; preview host is not affected.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Login register DOB", "issues": ["Browser's native validation tooltip for setCustomValidity partially overlays the inline amber too-young message, causing minor duplicate messaging on submit. Non-blocking - both messages are consistent."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "DobPicker useEffect that clamps day has deps [maxDay] only (missing d); works but ESLint exhaustive-deps would warn. Non-blocking.",
+    "www->apex redirect uses location.replace which is correct; condition is strict hostname match so no risk of over-matching subdomains like preview.emergentagent.com."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A", "frontend": "100%"},
+  "test_credentials": "N/A (no account creation performed)",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Preview URL serves root Vite via /app frontend. Register DOB testIds: register-dob-{day|month|year}-select, warning: register-dob-too-young-msg. Year list = thisYear..thisYear-120. Too-young triggers when thisYear-y<13 or full-dob age<13. Native setCustomValidity on year select blocks form submission; no register network request fires. Current year during test: 2026."
+}

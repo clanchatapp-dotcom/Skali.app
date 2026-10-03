@@ -44,11 +44,11 @@ async function saveNative(url: string, name: string): Promise<boolean> {
   }
 }
 
-export async function saveMedia(url: string, filename?: string): Promise<boolean> {
+export async function saveMedia(url: string, filename?: string): Promise<'saved' | 'opened'> {
   const name = filename || guessName(url)
 
   // 1) Native gallery/files save when running inside the app build.
-  if (await saveNative(url, name)) return true
+  if (await saveNative(url, name)) return 'saved'
 
   // 2) Web: fetch -> blob -> download link (keeps the media off a new tab).
   try {
@@ -63,7 +63,7 @@ export async function saveMedia(url: string, filename?: string): Promise<boolean
     a.click()
     a.remove()
     setTimeout(() => URL.revokeObjectURL(objUrl), 4000)
-    return true
+    return 'saved'
   } catch {
     // 3) CORS/offline fallback — open so the user can long-press to save.
     const a = document.createElement('a')
@@ -74,6 +74,6 @@ export async function saveMedia(url: string, filename?: string): Promise<boolean
     document.body.appendChild(a)
     a.click()
     a.remove()
-    return true
+    return 'opened'
   }
 }

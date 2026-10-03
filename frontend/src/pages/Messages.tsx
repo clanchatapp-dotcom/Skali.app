@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { api, getToken, wsDmUrl } from '../lib/api'
-import { Avatar, Linkify } from '../lib/ui'
+import { Avatar, ZoomAvatar, Linkify } from '../lib/ui'
 import { useAuth } from '../lib/auth'
 import CallModal from '../components/CallModal'
 import RoleBadge from '../components/RoleBadge'
@@ -1900,7 +1900,7 @@ export default function Messages() {
                     <Bookmark className="h-5 w-5 text-white" />
                   </div>
                 ) : (
-                  <Avatar
+                  <ZoomAvatar
                     id={
                       thread.peer.id
                     }
@@ -1913,6 +1913,7 @@ export default function Messages() {
                         .avatar_url
                     }
                     size={38}
+                    testID="chat-header-avatar"
                   />
                 )}
 

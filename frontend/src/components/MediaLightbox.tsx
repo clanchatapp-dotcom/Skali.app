@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { X, ChevronLeft, ChevronRight, Download, Check, Loader2 } from 'lucide-react'
 import { saveMedia } from '../lib/saveMedia'
+import { showToast } from '../lib/toast'
 
 type Item = { url: string; type: string }
 
@@ -49,8 +51,13 @@ export default function MediaLightbox({ items, index = 0, onClose, allowSave = f
     e.stopPropagation()
     if (saveState === 'saving') return
     setSaveState('saving')
-    try { await saveMedia(cur.url); setSaveState('done'); setTimeout(() => setSaveState('idle'), 1800) }
-    catch { setSaveState('idle') }
+    try {
+      const r = await saveMedia(cur.url)
+      setSaveState('done'); setTimeout(() => setSaveState('idle'), 1800)
+      showToast(r === 'saved' ? 'Saved to your device' : 'Opened — long-press to save', r === 'saved' ? 'success' : 'info')
+    } catch {
+      setSaveState('idle'); showToast('Could not save this media', 'error')
+    }
   }
 
   const dist = (t: React.TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY)
@@ -103,7 +110,7 @@ export default function MediaLightbox({ items, index = 0, onClose, allowSave = f
 
   const fade = (g.current.mode === 'swipe' && scale === 1) ? Math.max(0.2, 1 - Math.abs(ty) / 450) : 1
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-[90] grid place-items-center"
       style={{ background: `rgba(0,0,0,${0.96 * fade})` }}
@@ -162,6 +169,7 @@ export default function MediaLightbox({ items, index = 0, onClose, allowSave = f
           {items.map((_, i) => <span key={i} className={`h-1.5 rounded-full transition-all ${i === idx ? 'w-4 bg-white' : 'w-1.5 bg-white/40'}`} />)}
         </div>
       )}
-    </div>
+    </div>,
+    document.body,
   )
 }

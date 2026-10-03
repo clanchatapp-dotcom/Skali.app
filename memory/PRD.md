@@ -96,3 +96,17 @@ USER ACTIONS STILL REQUIRED:
 - Native gallery save needs `@capacitor/filesystem` added to the Android build (not installed; guarded dynamic import).
 - Platform/base-image mismatch (Expo pod vs React base image) may affect reliable preview-after-restart and deploy — route to support if the preview drops.
 
+
+
+---
+
+## Iteration — 2026-10-03 (Live Viewer List, Save Confirmation, Pinch Zoom Everywhere)
+
+Verified by testing agent (iteration_17.json — all PASS).
+
+- **Live Viewer List (LiveModal.tsx):** the viewer-count chip (`live-viewers`) is now a button opening a bottom-sheet panel (`live-viewers-panel`) listing watchers from LiveKit `useRemoteParticipants` (host filtered out). Host-only "Greet" button (`live-greet`) posts a `👋 Hey {name}!` wave into the live chat via the WS. Close via `live-viewers-close`.
+- **Save Confirmation:** new `src/lib/toast.ts` (`showToast`, a DOM pill appended to `<body>`, testid `app-toast`). `saveMedia` now returns `'saved' | 'opened'` so the message is accurate ("Saved to your device" vs "Opened — long-press to save"). Wired in `PostCard.tsx` and `MediaLightbox.tsx`.
+- **Pinch Zoom Everywhere:** `MediaLightbox` now renders through a React portal to `document.body` so it overlays from anywhere. New reusable `ZoomAvatar` (`src/lib/ui.tsx`) opens the zoomable lightbox on tap when an avatar image exists. Used in comments (`PostCard` → `comment-avatar`) and the chat conversation header (`Messages.tsx` → `chat-header-avatar`).
+
+Notes/backlog (non-blocking): `PostCard` uses one shared `saveState` for all media items (fine for single active image); native gallery save still needs `@capacitor/filesystem` at build time; live stage (and thus the viewer list in action) only testable on a real device/build with camera+mic.
+

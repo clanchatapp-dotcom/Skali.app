@@ -7,13 +7,14 @@ import {
   useTracks,
   useLocalParticipant,
   useConnectionState,
+  useRemoteParticipants,
 } from '@livekit/components-react'
 import { ConnectionState, Track } from 'livekit-client'
 import { api, getToken, wsLiveUrl } from '../lib/api'
 import { Avatar } from '../lib/ui'
 import {
   X, Loader2, Heart, Send, Radio, Users, Users2, Globe2, Save,
-  Mic, MicOff, Video, VideoOff, RotateCcw,
+  Mic, MicOff, Video, VideoOff, RotateCcw, Hand,
 } from 'lucide-react'
 
 type Audience = 'followers' | 'inner'
@@ -47,6 +48,11 @@ function LiveStage({
   const { localParticipant } = useLocalParticipant()
   const connectionState = useConnectionState()
   const connected = connectionState === ConnectionState.Connected
+  // Everyone else in the room. For the host these are the viewers; for a
+  // viewer we drop the host so the list is just fellow watchers.
+  const remotes = useRemoteParticipants()
+  const viewerList = remotes.filter(p => p.identity !== (host?.id))
+  const [showViewers, setShowViewers] = useState(false)
 
   const [messages, setMessages] = useState<any[]>([])
   const [viewers, setViewers] = useState(0)
@@ -188,6 +194,13 @@ function LiveStage({
   const sendHeart = () => {
     wsRef.current?.readyState === 1 && wsRef.current.send(JSON.stringify({ type: 'heart' }))
   }
+  // Host taps a viewer to greet them — posts a friendly wave into the chat.
+  const greet = (p: { name?: string; identity: string }) => {
+    const nm = (p.name || p.identity || '').replace(/^#/, '')
+    if (wsRef.current?.readyState === 1) {
+      wsRef.current.send(JSON.stringify({ type: 'chat', text: `👋 Hey ${nm}!` }))
+    }
+  }
 
   const toggleMic = async () => {
     try { const on = await localParticipant.setMicrophoneEnabled(!micOn); setMicOn(on) } catch { /* noop */ }
@@ -237,9 +250,10 @@ function LiveStage({
             <Avatar id={host?.handle || 'host'} name={hostName} url={host?.avatar_url} size={26} />
             <span className="text-white text-sm font-semibold truncate max-w-[38vw]">{hostName}</span>
           </div>
-          <span className="flex items-center gap-1 bg-black/45 backdrop-blur text-white text-xs px-2.5 py-1.5 rounded-full" data-testid="live-viewers">
-            <Users className="h-3.5 w-3.5" />{viewers}
-          </span>
+          <button onClick={() => setShowViewers(true)} data-testid="live-viewers"
+            className="flex items-center gap-1 bg-black/45 backdrop-blur text-white text-xs px-2.5 py-1.5 rounded-full active:scale-95 transition">
+            <Users className="h-3.5 w-3.5" />{viewers || viewerList.length}
+          </button>
           <button onClick={isHost ? endLive : onClose} data-testid="live-close"
             className="ml-auto h-9 w-9 grid place-items-center rounded-full bg-black/45 backdrop-blur text-white">
             <X className="h-5 w-5" />
@@ -249,6 +263,43 @@ function LiveStage({
       </div>
 
       <FloatingHearts hearts={hearts} />
+
+      {/* Viewer list — tap the viewer count to see who's watching; the host
+          can greet any viewer with a wave in the chat. */}
+      {showViewers && (
+        <div className="absolute inset-0 z-40 flex flex-col justify-end" data-testid="live-viewers-panel"
+          onClick={() => setShowViewers(false)}>
+          <div className="absolute inset-0 bg-black/50" />
+          <div className="relative bg-zinc-900 rounded-t-2xl max-h-[62%] flex flex-col pb-[calc(1rem+env(safe-area-inset-bottom))]"
+            onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-2 px-4 pt-4 pb-3 border-b border-white/10">
+              <Users className="h-4 w-4 text-white/70" />
+              <span className="text-white font-semibold text-sm">{viewerList.length} watching</span>
+              <button onClick={() => setShowViewers(false)} data-testid="live-viewers-close"
+                className="ml-auto h-8 w-8 grid place-items-center rounded-full bg-white/10 text-white"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="overflow-y-auto px-2 py-2">
+              {viewerList.length === 0 ? (
+                <div className="text-white/50 text-sm text-center py-10">No one is watching yet.</div>
+              ) : viewerList.map(p => {
+                const nm = (p.name || p.identity || '').replace(/^#/, '')
+                return (
+                  <div key={p.identity} className="flex items-center gap-3 px-2 py-2 rounded-xl hover:bg-white/5">
+                    <Avatar id={p.identity} name={nm} size={36} />
+                    <span className="text-white text-sm font-medium flex-1 truncate">{p.name || nm}</span>
+                    {isHost && (
+                      <button onClick={() => greet({ name: p.name, identity: p.identity })} data-testid="live-greet"
+                        className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full bg-brand text-white active:scale-95 transition">
+                        <Hand className="h-3.5 w-3.5" /> Greet
+                      </button>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Chat feed */}
       <div className="absolute left-0 right-16 bottom-24 z-20 max-h-[42%] overflow-y-auto no-scrollbar px-3 space-y-1.5"

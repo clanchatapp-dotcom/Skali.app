@@ -2,8 +2,9 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Trash2, Flag, MessageCircle, Send, CornerDownRight, SmilePlus, Sparkles, History, X, Pin, Play, Download, Check, Loader2 } from 'lucide-react'
 import { api } from '../lib/api'
-import { Avatar, TIER, TierKey, timeAgo, Linkify } from '../lib/ui'
+import { Avatar, ZoomAvatar, TIER, TierKey, timeAgo, Linkify } from '../lib/ui'
 import { saveMedia } from '../lib/saveMedia'
+import { showToast } from '../lib/toast'
 import RoleBadge from './RoleBadge'
 import AdultBadge from './AdultBadge'
 import AccountBadge from './AccountBadge'
@@ -61,8 +62,13 @@ export default function PostCard({ post, onDelete }: { post: any; onDelete?: (id
     const m = visuals[i]
     if (!m || saveState === 'saving') return
     setSaveState('saving')
-    try { await saveMedia(m.url); setSaveState('done'); setTimeout(() => setSaveState('idle'), 1800) }
-    catch { setSaveState('idle') }
+    try {
+      const r = await saveMedia(m.url)
+      setSaveState('done'); setTimeout(() => setSaveState('idle'), 1800)
+      showToast(r === 'saved' ? 'Saved to your device' : 'Opened — long-press to save', r === 'saved' ? 'success' : 'info')
+    } catch {
+      setSaveState('idle'); showToast('Could not save this media', 'error')
+    }
   }
 
   const react = async (emoji: string) => {
@@ -334,7 +340,7 @@ function Comment({ c, onReply, onDelete }: { c: any; onReply?: () => void; onDel
   const a = c.author || { handle: 'unknown', display_name: 'Unknown' }
   return (
     <div className="flex gap-2">
-      <Link to={`/u/${a.handle}`}><Avatar id={a.id} name={a.display_name} url={a.avatar_url} size={30} /></Link>
+      <ZoomAvatar id={a.id} name={a.display_name} url={a.avatar_url} size={30} testID="comment-avatar" />
       <div className="flex-1 min-w-0">
         <div className="bg-ink border border-edge rounded-2xl px-3 py-2">
           <Link to={`/u/${a.handle}`} className="text-sm font-medium hover:underline">{a.display_name}</Link>

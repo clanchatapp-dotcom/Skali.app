@@ -1,5 +1,6 @@
 import { Globe, Users, Lock } from 'lucide-react'
 import { useState, useEffect } from 'react'
+import MediaLightbox from '../components/MediaLightbox'
 
 export const TIER = {
   public: { label: 'Public', icon: Globe, text: 'text-emerald-400', bg: 'bg-emerald-500/15', ring: 'border-emerald-500/30', dot: 'bg-emerald-400' },
@@ -38,6 +39,28 @@ export function Avatar({ id, name, url, size = 40 }: { id: string; name: string;
       className={`rounded-full shrink-0 grid place-items-center font-bold text-white bg-gradient-to-br ${gradFor(id)}`}>
       {initials(name)}
     </div>
+  )
+}
+
+// A tappable avatar that expands the photo full-screen (pinch-to-zoom) when it
+// has an image. Used in chats and comments so any profile pic can be zoomed.
+export function ZoomAvatar({ id, name, url, size = 40, className = '', testID }: {
+  id: string; name: string; url?: string | null; size?: number; className?: string; testID?: string
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <button
+        type="button"
+        data-testid={testID || 'zoom-avatar'}
+        aria-label={`View ${name}'s photo`}
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (url) setOpen(true) }}
+        className={`rounded-full shrink-0 ${url ? 'cursor-zoom-in' : 'cursor-default'} ${className}`}
+      >
+        <Avatar id={id} name={name} url={url} size={size} />
+      </button>
+      {open && url && <MediaLightbox items={[{ url, type: 'image' }]} onClose={() => setOpen(false)} />}
+    </>
   )
 }
 

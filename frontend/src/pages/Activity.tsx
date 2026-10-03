@@ -5,9 +5,9 @@ import { Avatar, timeAgo } from '../lib/ui'
 import RoleBadge from '../components/RoleBadge'
 import AdultBadge from '../components/AdultBadge'
 import AccountBadge from '../components/AccountBadge'
-import { Heart, UserPlus, Lock, Check, Tag, X, Trash2 } from 'lucide-react'
+import { Heart, UserPlus, Lock, Check, Tag, X, Trash2, Radio } from 'lucide-react'
 
-const ICON: any = { like: Heart, follow: UserPlus, follow_request: UserPlus, follow_accepted: Check, inner_invite: Lock, inner_accepted: Lock, tag_request: Tag }
+const ICON: any = { like: Heart, follow: UserPlus, follow_request: UserPlus, follow_accepted: Check, inner_invite: Lock, inner_accepted: Lock, tag_request: Tag, live: Radio }
 
 export default function Activity() {
   const [items, setItems] = useState<any[]>([])

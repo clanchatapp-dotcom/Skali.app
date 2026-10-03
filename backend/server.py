@@ -200,14 +200,14 @@ FONT_SIZE_VALUES = ('small', 'normal', 'large')
 DISPLAY_DEFAULTS = {'theme': 'dark', 'accent': 'violet', 'font_size': 'normal'}
 
 # Phase 5 — Granular notification preferences (True = show in Activity).
-NOTIF_KEYS = ['follows', 'wall', 'reactions', 'comments', 'dms', 'inner']
+NOTIF_KEYS = ['follows', 'wall', 'reactions', 'comments', 'dms', 'inner', 'live']
 NOTIF_DEFAULTS = {k: True for k in NOTIF_KEYS}
 # Maps an activity 'type' to the notification pref key that gates it.
 ACTIVITY_TYPE_TO_NOTIF = {
     'follow': 'follows', 'follow_request': 'follows', 'follow_accepted': 'follows',
     'inner_invite': 'inner', 'inner_accepted': 'inner',
     'wall': 'wall', 'like': 'reactions', 'react': 'reactions',
-    'comment': 'comments', 'dm': 'dms',
+    'comment': 'comments', 'dm': 'dms', 'live': 'live',
 }
 
 # Phase 5 — Block / Mute / Restrict.
@@ -5701,7 +5701,7 @@ async def _can_watch_live(viewer_id: str, s: dict) -> bool:
     return await is_follower(viewer_id, host) or await in_inner(host, viewer_id)
 
 
-async def _notify_live(doc: dict):
+async def _notify_live(doc: dict, host_user: dict):
     host = doc['host_id']
     targets = set()
     if doc['audience'] == 'inner':
@@ -5713,8 +5713,23 @@ async def _notify_live(doc: dict):
         async for r in db.inner.find({'owner_id': host, 'status': 'accepted'}):
             targets.add(r['member_id'])
     payload = {'type': 'live_started', 'live': _live_out(doc)}
+    title = doc.get('title') or ''
+    activity_text = 'is live now' + (f' · {title}' if title else '')
+    push_title = f"#{host_user['handle']} is live"
+    push_body = title or 'Tap to watch the stream'
+    push_data = {'type': 'live', 'live_id': doc['id'], 'url': '/'}
     for t in targets:
+        if t == host:
+            continue
         await manager.broadcast('user:' + t, payload)
+        try:
+            await add_activity(t, 'live', host_user, activity_text)
+        except Exception as e:
+            log.warning('live activity failed: %s', e)
+        try:
+            await push_to_user(t, push_title, push_body, push_data)
+        except Exception as e:
+            log.warning('live push failed: %s', e)
 
 
 @app.post('/api/live/start')
@@ -5744,7 +5759,7 @@ async def live_start(body: LiveStart, u: dict = Depends(get_current_user)):
              .with_grants(lk_api.VideoGrants(room_join=True, room=room,
                                              can_publish=True, can_subscribe=True)))
     try:
-        await _notify_live(doc)
+        await _notify_live(doc, u)
     except Exception as e:
         log.warning('live notify failed: %s', e)
     return {'id': live_id, 'room': room, 'server_url': LIVEKIT_URL,

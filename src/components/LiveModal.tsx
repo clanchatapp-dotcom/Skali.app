@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import {
   LiveKitRoom,
   RoomAudioRenderer,
@@ -338,10 +339,10 @@ export default function LiveModal({
 
   useEffect(() => { if (mode === 'viewer' && liveId) joinViewer() }, [mode, liveId, joinViewer])
 
-  return (
-    <div className="fixed inset-0 z-[70] bg-black flex flex-col" data-testid="live-modal">
+  return createPortal(
+    <div className="fixed inset-0 z-[90] bg-black flex flex-col" data-testid="live-modal">
       {phase === 'setup' && (
-        <div className="h-full flex flex-col p-5 pt-[calc(1.25rem+env(safe-area-inset-top))] pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
+        <div className="h-full flex flex-col overflow-y-auto p-5 pt-[calc(1.25rem+env(safe-area-inset-top))] pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
           <div className="flex items-center gap-2 mb-6">
             <span className="flex items-center gap-1.5 bg-rose-600 text-white text-xs font-bold px-2 py-1 rounded-md"><Radio className="h-3.5 w-3.5" />GO LIVE</span>
             <button onClick={onClose} className="ml-auto h-9 w-9 grid place-items-center rounded-full bg-white/10 text-white"><X className="h-5 w-5" /></button>
@@ -424,6 +425,7 @@ export default function LiveModal({
           </LiveKitRoom>
         </div>
       )}
-    </div>
+    </div>,
+    document.body,
   )
 }

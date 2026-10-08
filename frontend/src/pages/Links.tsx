@@ -3,7 +3,6 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, ExternalLink, Link as LinkIcon, Loader2, ShoppingBag } from 'lucide-react'
 import { api } from '../lib/api'
 import { Avatar } from '../lib/ui'
-import { ShopTab } from './Profile'
 
 function normaliseUrl(value: string) {
   const trimmed = value.trim()
@@ -120,13 +119,10 @@ export default function Links() {
             )}
           </div>
 
-          <section className="mt-6" data-testid="links-shop-section">
-            <div className="flex items-center gap-2 mb-3 text-sm font-semibold text-slate-300">
-              <ShoppingBag className="h-4 w-4 text-brand shrink-0" />
-              Shop
-            </div>
-            <ShopTab handle={p.handle} />
-          </section>
+          <div className="mt-5 bg-panel/50 border border-edge rounded-2xl p-4 text-sm text-slate-500 flex items-center gap-2">
+            <ShoppingBag className="h-4 w-4 shrink-0" />
+            Shop · Coming soon
+          </div>
         </div>
       </div>
     </div>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
 import { Avatar } from '../lib/ui'
 import { Users2, ArrowLeft, Loader2, UserMinus, Lock, Check, Ban, VolumeX, ShieldOff, UserPlus } from 'lucide-react'
@@ -17,8 +17,7 @@ export default function Connections() {
   const nav = useNavigate()
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
-  const [sp] = useSearchParams()
-  const [tab, setTab] = useState<TabKey>(() => (TABS.some(t => t.key === sp.get('tab')) ? sp.get('tab') : 'followers') as TabKey)
+  const [tab, setTab] = useState<TabKey>('followers')
   const [busy, setBusy] = useState<string | null>(null)
 
   const load = async () => {

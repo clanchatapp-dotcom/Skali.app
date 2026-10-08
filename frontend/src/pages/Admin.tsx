@@ -1,4 +1,3 @@
-import StreamersPanel from '../components/StreamersPanel'
 import { useEffect, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { api, setStepUp, hasStepUp } from '../lib/api'
@@ -37,9 +36,7 @@ function Stat({ label, value, danger }: { label: string; value: any; danger?: bo
 
 export default function Admin() {
   const { user } = useAuth()
-  const supportOnly = !!(user as any)?.is_support_bot && !user?.is_admin && !(user as any)?.can_moderate
-  const [tab, setTab] = useState(supportOnly ? 'support' : 'reports')
-  const [supportUnread, setSupportUnread] = useState(0)
+  const [tab, setTab] = useState('reports')
   const [stats, setStats] = useState<any>({})
   const [data, setData] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -57,7 +54,7 @@ export default function Admin() {
   const [dz, setDz] = useState(false)
   const isFull = !!user?.is_admin                      // super_admin OR co_admin
   const isSuper = (user as any)?.role === 'super_admin'
-  const visibleTabs = supportOnly ? TABS.filter(t => t.key === 'support') : TABS.filter(t => isFull || !t.full)
+  const visibleTabs = TABS.filter(t => isFull || !t.full)
   const loadRoles = async () => { try { setRoles(await api.adminRoles()) } catch {} }
   const doAssign = async () => {
     const h = assignHandle.trim().replace(/^[#@]/, '')
@@ -108,20 +105,8 @@ export default function Admin() {
   const revokeCreator = async (h: string) => { if (!confirm(`Remove creator access from #${h}?`)) return; try { await api.adminRevokeCreator(h); await loadCreators(); await searchCreators() } catch (e: any) { alert(e.message) } }
   const grantAdult = async (h: string) => { if (!confirm(`Make #${h} an ADULT (18+) content creator? This flags the account NSFW everywhere and unlocks adult creator tools.`)) return; try { await api.adminGrantAdultCreator(h); await loadCreators(); await searchCreators(); if (tab === 'users') load() } catch (e: any) { alert(e.message) } }
   const revokeAdult = async (h: string) => { if (!confirm(`Remove the adult (18+) creator status from #${h}?`)) return; try { await api.adminRevokeAdultCreator(h); await loadCreators(); await searchCreators(); if (tab === 'users') load() } catch (e: any) { alert(e.message) } }
-  const loadSupport = async () => {
-    try { setSupport(await api.supportThreads()) } catch {}
-    api.supportUnread().then((r: any) => setSupportUnread(r.unread || 0)).catch(() => {})
-  }
+  const loadSupport = async () => { try { setSupport(await api.supportThreads()) } catch {} }
   const openSupport = async (h: string) => { try { setSupportThread(await api.supportThread(h)); await loadSupport() } catch (e: any) { alert(e.message) } }
-  const claimSupport = async (h: string, claim: boolean, current?: any) => {
-    if (claim && current && current.id !== user?.id && !confirm(`#${current.handle} is handling this chat. Take it over?`)) return
-    try { await api.supportClaim(h, claim); if (supportThread?.user.handle === h) setSupportThread(await api.supportThread(h)); await loadSupport() }
-    catch (e: any) { alert(e.message) }
-  }
-  const solveSupport = async (h: string, solved: boolean) => {
-    try { await api.supportSolve(h, solved); if (supportThread?.user.handle === h) setSupportThread(await api.supportThread(h)); await loadSupport() }
-    catch (e: any) { alert(e.message) }
-  }
   const sendSupport = async () => {
     const t = supportReplyText.trim()
     if (!t || !supportThread) return
@@ -145,18 +130,10 @@ export default function Admin() {
       else if (tab === 'audit') setData([])
     } catch { setData([]) } finally { setLoading(false) }
   }
-  useEffect(() => {
-    if (!supportOnly) loadStats()
-    api.supportUnread().then((r: any) => setSupportUnread(r.unread || 0)).catch(() => {})
-  }, [])
-  useEffect(() => {
-    if (tab !== 'support') return
-    const t = setInterval(loadSupport, 20000)
-    return () => clearInterval(t)
-  }, [tab])
+  useEffect(() => { loadStats() }, [])
   useEffect(() => { load() }, [tab])
 
-  if (user && !user.is_admin && !(user as any).can_moderate && !(user as any).is_support_bot) return <Navigate to="/" replace />
+  if (user && !user.is_admin && !(user as any).can_moderate) return <Navigate to="/" replace />
 
   const act = async (id: string, action: string, severe = false) => {
     let reason = ''
@@ -257,12 +234,12 @@ export default function Admin() {
   return (
     <div>
       <div className="sticky top-0 z-30 bg-ink/80 backdrop-blur border-b border-edge px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))] flex items-center gap-2">
-        <Shield className="h-5 w-5 text-brand" /><h1 className="text-xl font-extrabold">{supportOnly ? 'Support inbox' : 'Admin'}</h1>
-        <span className="text-xs text-slate-500 ml-2">{supportOnly ? 'Skali Team' : 'Reports · CSAM · Trust & Safety'}</span>
+        <Shield className="h-5 w-5 text-brand" /><h1 className="text-xl font-extrabold">Admin</h1>
+        <span className="text-xs text-slate-500 ml-2">Reports · CSAM · Trust &amp; Safety</span>
       </div>
 
       <div className="p-4 space-y-4">
-        {!supportOnly && <div className="grid grid-cols-3 lg:grid-cols-6 gap-2">
+        <div className="grid grid-cols-3 lg:grid-cols-6 gap-2">
           <Stat label="Users" value={stats.users} />
           <Stat label="Posts" value={stats.posts} />
           <Stat label="Open reports" value={stats.open_reports} danger />
@@ -273,14 +250,13 @@ export default function Admin() {
           <Stat label="Watchlist" value={stats.watchlisted} />
           <Stat label="NSFW queue" value={stats.nsfw_open} danger />
           <Stat label="Deleted" value={stats.deleted} />
-        </div>}
+        </div>
 
         <div className="flex gap-1 bg-panel border border-edge rounded-xl p-1 overflow-x-auto max-w-full">
           {visibleTabs.map(t => (
-            <button key={t.key} onClick={() => setTab(t.key)} data-testid={`admin-tab-${t.key}`}
+            <button key={t.key} onClick={() => setTab(t.key)}
               className={`shrink-0 whitespace-nowrap flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg ${tab === t.key ? 'bg-brand text-white' : 'text-slate-400 hover:text-white'}`}>
               <t.icon className="h-4 w-4" />{t.label}
-              {t.key === 'support' && supportUnread > 0 && <span data-testid="admin-support-unread-badge" className={`ml-0.5 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] grid place-items-center font-bold ${tab === t.key ? 'bg-white text-brand' : 'bg-rose-500 text-white'}`}>{supportUnread > 99 ? '99+' : supportUnread}</span>}
             </button>
           ))}
         </div>
@@ -352,7 +328,6 @@ export default function Admin() {
 
             {tab === 'roles' && (
               <div className="space-y-4">
-                <StreamersPanel isSuper={isSuper} />
                 <div className="bg-panel border border-edge rounded-2xl p-4">
                   <div className="text-sm font-medium mb-2">Assign a staff role</div>
                   <div className="flex flex-col sm:flex-row gap-2">
@@ -490,30 +465,25 @@ export default function Admin() {
               <div className="space-y-2" data-testid="support-panel">
                 <div className="bg-brand/5 border border-brand/20 rounded-2xl p-3 text-xs text-slate-300 flex items-start gap-2">
                   <MessageCircle className="h-4 w-4 text-brand shrink-0 mt-0.5" />
-                  <span>Every member's chat with the <b>Skali Team</b> account, unread first. Shared by all staff and the Skali Team login; replies are delivered to members as Skali Team.</span>
+                  <span>Conversations members have with the automated <b>Skali Team</b> bot. New members get an automatic welcome; replies here are delivered to them as the bot.</span>
                 </div>
                 {support.length === 0 && <p className="text-center text-slate-500 py-10">No support conversations yet.</p>}
-                {support.map((t, i) => (<div key={t.user.id}>
-                  {i === 0 && t.unread > 0 && <div className="text-xs uppercase tracking-wider text-brand font-semibold px-1 pt-1 pb-2" data-testid="support-unread-heading">Unread · {support.filter(x => x.unread > 0).length}</div>}
-                  {t.unread === 0 && !t.solved && (i === 0 || support[i - 1].unread > 0) && <div className="text-xs uppercase tracking-wider text-slate-500 font-semibold px-1 pt-3 pb-2" data-testid="support-earlier-heading">Earlier</div>}
-                  {t.solved && (i === 0 || !support[i - 1].solved) && <div className="text-xs uppercase tracking-wider text-emerald-400/80 font-semibold px-1 pt-3 pb-2" data-testid="support-solved-heading">Solved · {support.filter(x => x.solved).length}</div>}
-                  <button onClick={() => openSupport(t.user.handle)} data-testid={`support-thread-${t.user.handle}`}
-                    className={`w-full text-left bg-panel border rounded-2xl p-3 flex items-center gap-3 hover:bg-white/5 ${t.unread > 0 ? 'border-brand/50' : 'border-edge'} ${t.solved ? 'opacity-70' : ''}`}>
+                {support.map(t => (
+                  <button key={t.user.id} onClick={() => openSupport(t.user.handle)} data-testid={`support-thread-${t.user.handle}`}
+                    className="w-full text-left bg-panel border border-edge rounded-2xl p-3 flex items-center gap-3 hover:bg-white/5">
                     <div className="h-10 w-10 rounded-full bg-white/5 grid place-items-center overflow-hidden shrink-0">
                       {t.user.avatar_url ? <img src={t.user.avatar_url} className="h-full w-full object-cover" /> : <Users className="h-4 w-4 text-slate-400" />}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="font-medium truncate flex items-center gap-2">{t.user.display_name} <span className="text-xs text-slate-500">#{t.user.handle}</span></div>
                       <div className="text-xs text-slate-500 truncate">{t.from_user ? '' : '↩ '}{t.last}</div>
-                      {t.assigned && <div className="text-[10px] text-amber-300/90 mt-0.5 flex items-center gap-1" data-testid={`support-assigned-${t.user.handle}`}><UserCog className="h-3 w-3" />{t.assigned.id === user?.id ? 'Handled by you' : `Handled by #${t.assigned.handle}`}</div>}
-                      {t.solved && <div className="text-[10px] text-emerald-400/80 mt-0.5 flex items-center gap-1" data-testid={`support-solved-${t.user.handle}`}><Check className="h-3 w-3" />Solved{t.solved.solved_by ? ` by #${t.solved.solved_by}` : ''} · {timeAgo(t.solved.solved_at)}</div>}
                     </div>
                     <div className="text-right shrink-0">
                       <div className="text-[10px] text-slate-600">{timeAgo(t.created_at)}</div>
-                      {t.unread > 0 && <span className="inline-block mt-1 text-[10px] bg-brand text-white rounded-full px-1.5 py-0.5" data-testid={`support-unread-${t.user.handle}`}>{t.unread}</span>}
+                      {t.unread > 0 && <span className="inline-block mt-1 text-[10px] bg-brand text-white rounded-full px-1.5 py-0.5">{t.unread}</span>}
                     </div>
                   </button>
-                </div>))}
+                ))}
               </div>
             )}
 
@@ -733,21 +703,7 @@ export default function Admin() {
           <div className="bg-panel border border-edge rounded-2xl w-full max-w-lg h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="flex items-center gap-2 p-4 border-b border-edge">
               <MessageCircle className="h-5 w-5 text-brand" />
-              <div className="flex-1 min-w-0"><div className="font-semibold truncate">{supportThread.user.display_name}</div><div className="text-xs text-slate-500 truncate" data-testid="support-thread-status">#{supportThread.user.handle}{supportThread.assigned ? ` · ${supportThread.assigned.id === user?.id ? 'you are handling this' : `handled by #${supportThread.assigned.handle}`}` : ''} · {supportThread.solved ? `solved${supportThread.solved.solved_by ? ` by #${supportThread.solved.solved_by}` : ''}` : 'replying as Skali Team'}</div></div>
-              {supportThread.assigned?.id === user?.id ? (
-                <button onClick={() => claimSupport(supportThread.user.handle, false)} data-testid="support-release-btn"
-                  className="px-3 h-8 rounded-lg border border-edge text-xs font-semibold text-slate-300 hover:bg-white/5">Release</button>
-              ) : (
-                <button onClick={() => claimSupport(supportThread.user.handle, true, supportThread.assigned)} data-testid="support-claim-btn"
-                  className="px-3 h-8 rounded-lg border border-amber-500/40 bg-amber-500/10 text-xs font-semibold text-amber-300 hover:bg-amber-500/20 flex items-center gap-1"><UserCog className="h-3.5 w-3.5" />{supportThread.assigned ? 'Take over' : 'Claim'}</button>
-              )}
-              {supportThread.solved ? (
-                <button onClick={() => solveSupport(supportThread.user.handle, false)} data-testid="support-reopen-btn"
-                  className="px-3 h-8 rounded-lg border border-edge text-xs font-semibold text-slate-300 hover:bg-white/5">Reopen</button>
-              ) : (
-                <button onClick={() => solveSupport(supportThread.user.handle, true)} data-testid="support-solve-btn"
-                  className="px-3 h-8 rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/20 flex items-center gap-1"><Check className="h-3.5 w-3.5" />Mark solved</button>
-              )}
+              <div className="flex-1 min-w-0"><div className="font-semibold truncate">{supportThread.user.display_name}</div><div className="text-xs text-slate-500 truncate">#{supportThread.user.handle} · replying as Skali Team</div></div>
               <button onClick={() => setSupportThread(null)} className="h-8 w-8 grid place-items-center rounded-lg hover:bg-white/10"><X className="h-4 w-4" /></button>
             </div>
             <div className="p-4 overflow-y-auto space-y-2 flex-1">

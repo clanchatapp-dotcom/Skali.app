@@ -1,18 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
-import LiveNowBanner from '../components/LiveNowBanner'
 import { api } from '../lib/api'
 import { TIER, TierKey } from '../lib/ui'
 import PostCard from '../components/PostCard'
 import { StoryRail } from '../components/Stories'
 import { INTERESTS } from '../lib/interests'
-import { Image as ImageIcon, Loader2, X, Mic, Square } from 'lucide-react'
-
-const FEED_TABS = [
-  { key: 'general', label: 'General' },
-  { key: 'followers', label: 'Following' },
-  { key: 'interests', label: 'Interests' }
-] as const
+import { Image as ImageIcon, Loader2, X, ChevronDown, Mic, Square } from 'lucide-react'
 
 function Composer({ onPosted }: { onPosted: () => void }) {
   const [tier, setTier] = useState<TierKey>('public')
@@ -147,20 +139,20 @@ function Composer({ onPosted }: { onPosted: () => void }) {
     setExpanded(false)
   }
 
-  // Centre "Create" button in the bottom bar opens the composer.
-  useEffect(() => {
-    const openIt = () => { sessionStorage.removeItem('skali:compose'); setExpanded(true) }
-    if (sessionStorage.getItem('skali:compose')) openIt()
-    window.addEventListener('skali:compose', openIt)
-    return () => window.removeEventListener('skali:compose', openIt)
-  }, [])
+  return (
+    <div className="bg-panel border border-edge rounded-2xl p-4">
 
-  // The composer only exists as a sheet opened from the centre "+" button.
-  if (!expanded) return null
+      {/* Collapsed composer */}
+      {!expanded ? (
+        <button
+          onClick={() => setExpanded(true)}
+          className="w-full text-left text-slate-400 text-base py-2"
+        >
+          What's happening in your gathering?
+        </button>
+      ) : (
 
-  return createPortal(
-    <div className="fixed inset-0 z-[75] bg-black/70 backdrop-blur grid place-items-end sm:place-items-center" onClick={closeComposer} data-testid="composer-sheet">
-    <div className="bg-panel border border-edge rounded-t-2xl sm:rounded-2xl p-4 w-full max-w-xl max-h-[90dvh] overflow-y-auto pb-[calc(1rem+env(safe-area-inset-bottom))]" onClick={e => e.stopPropagation()}>
+        /* Expanded composer */
         <div>
 
           {/* Header / close */}
@@ -173,7 +165,6 @@ function Composer({ onPosted }: { onPosted: () => void }) {
               onClick={closeComposer}
               className="h-8 w-8 grid place-items-center rounded-full text-slate-400 hover:text-white hover:bg-white/10"
               aria-label="Close composer"
-              data-testid="composer-close"
             >
               <X className="h-4 w-4" />
             </button>
@@ -210,7 +201,6 @@ function Composer({ onPosted }: { onPosted: () => void }) {
             onChange={e => setText(e.target.value)}
             rows={3}
             placeholder="What's happening in your gathering?"
-            data-testid="composer-text"
             className="w-full bg-ink border border-edge rounded-xl px-4 py-3 outline-none focus:border-brand resize-none"
           />
 
@@ -388,7 +378,6 @@ function Composer({ onPosted }: { onPosted: () => void }) {
 
             <button
               onClick={submit}
-              data-testid="composer-submit"
               disabled={busy || (!text.trim() && !mediaList.length)}
               className="ml-auto px-6 py-2.5 rounded-xl bg-gradient-to-r from-brand to-violet-600 font-semibold disabled:opacity-50"
             >
@@ -397,9 +386,8 @@ function Composer({ onPosted }: { onPosted: () => void }) {
 
           </div>
         </div>
+      )}
     </div>
-    </div>,
-    document.body
   )
 }
 
@@ -407,29 +395,12 @@ export default function Feed() {
   const [scope, setScope] = useState('general')
   const [posts, setPosts] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
-  const headRef = useRef<HTMLDivElement | null>(null)
-  const [headH, setHeadH] = useState(200)
-
-  useEffect(() => {
-    const el = headRef.current
-    if (!el) return
-    const ro = new ResizeObserver(() => setHeadH(el.offsetHeight))
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [])
 
   const load = async () => {
     setLoading(true)
 
     try {
-      if (scope === 'interests') {
-        const r = await api.interestsFeed()
-        setPosts(Array.isArray(r) ? r : [])
-      } else {
-        setPosts(await api.feed(scope))
-      }
-    } catch {
-      setPosts([])
+      setPosts(await api.feed(scope))
     } finally {
       setLoading(false)
     }
@@ -448,52 +419,43 @@ export default function Feed() {
     <div className="relative h-full min-h-0 overflow-hidden isolate">
 
       {/* Feed header — outside the scroll container, so it cannot move with the feed. */}
-      <div ref={headRef} data-testid="feed-pinned-header" className="absolute top-0 left-0 right-0 z-50 bg-ink/95 backdrop-blur border-b border-edge px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
-      <div className="flex items-center gap-3">
+      <div className="absolute top-0 left-0 right-0 z-50 bg-ink/95 backdrop-blur border-b border-edge px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))] flex items-center gap-3">
 
         <h1 className="text-xl font-extrabold">
           My Feed
         </h1>
 
-        {/* General / Following / Interests tab selector */}
-        <div className="ml-auto flex items-center bg-panel border border-edge rounded-full p-1" role="tablist" data-testid="feed-tabs">
-          {FEED_TABS.map(t => (
-            <button
-              key={t.key}
-              role="tab"
-              aria-selected={scope === t.key}
-              onClick={() => setScope(t.key)}
-              data-testid={`feed-tab-${t.key}`}
-              className={`px-2.5 sm:px-3.5 py-1.5 rounded-full text-xs sm:text-sm font-semibold transition-colors ${
-                scope === t.key ? 'bg-brand text-white' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
+        {/* General / Followers pill */}
+        <button
+          onClick={() =>
+            setScope(scope === 'general' ? 'followers' : 'general')
+          }
+          className="ml-auto flex items-center gap-1.5 bg-panel border border-edge rounded-full px-4 py-2 text-sm font-medium transition hover:border-brand/50"
+        >
+          <span className="text-slate-200 capitalize">
+            {scope}
+          </span>
+
+          <ChevronDown className="h-4 w-4 text-slate-400" />
+        </button>
+
       </div>
 
-        <div className="mt-3">
-          <StoryRail />
-        </div>
-        <LiveNowBanner />
-      </div>
+      {/* Feed content — the ONLY scrolling area. The header is a sibling, not part of this scroller. */}
+      <div className="absolute inset-0 overflow-y-auto overscroll-contain pt-[calc(5.5rem+env(safe-area-inset-top))] md:pt-4 px-4 pb-4 space-y-4 touch-pan-y">
 
-      <Composer onPosted={load} />
+        <Composer onPosted={load} />
 
-      {/* Feed content — the ONLY scrolling area. The header (title, tabs, stories) is pinned above it. */}
-      <div className="absolute inset-0 overflow-y-auto overscroll-contain px-4 pb-4 space-y-4 touch-pan-y" style={{ paddingTop: headH + 16 }} data-testid="feed-scroll">
+        <StoryRail />
+
 
         {loading ? (
           <div className="py-16 grid place-items-center text-slate-500">
             <Loader2 className="h-6 w-6 animate-spin" />
           </div>
         ) : posts.length === 0 ? (
-          <p className="text-center text-slate-500 py-10" data-testid="feed-empty">
-            {scope === 'interests'
-              ? 'Your interest feed is quiet. Follow interests in Settings → Preferences → Interests to see fresh posts here.'
-              : 'Nothing here yet. Make the first post!'}
+          <p className="text-center text-slate-500 py-10">
+            Nothing here yet. Make the first post!
           </p>
         ) : (
           posts.map(p => (

@@ -3,17 +3,18 @@ import { useSearchParams, useNavigate, Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { Avatar } from '../lib/ui'
 import { INTERESTS } from '../lib/interests'
-import Choices from './Choices'
-import FindStreamers from '../components/FindStreamers'
-import { Hash, AtSign, Search as SearchIcon, Compass, Sparkles, Radio } from 'lucide-react'
+import PostCard from '../components/PostCard'
+import { Hash, AtSign, Search as SearchIcon, Star, Compass, Loader2 } from 'lucide-react'
 
 export default function Search() {
   const [sp, setSp] = useSearchParams()
   const nav = useNavigate()
-  const initTab = sp.get('tab')
-  const [tab, setTab] = useState<'discover' | 'choices' | 'streamers'>(initTab === 'choices' ? 'choices' : initTab === 'streamers' ? 'streamers' : 'discover')
+  const [tab, setTab] = useState<'discover' | 'feed'>('discover')
   const [q, setQ] = useState(sp.get('q') || '')
   const [users, setUsers] = useState<any[]>([])
+  const [followed, setFollowed] = useState<string[]>([])
+  const [feed, setFeed] = useState<any[]>([])
+  const [feedLoading, setFeedLoading] = useState(false)
 
   // Mode is driven by the first character the user types:
   //   #handle  -> PEOPLE search      @interest -> INTERESTS filter
@@ -25,6 +26,11 @@ export default function Search() {
 
   useEffect(() => { setQ(sp.get('q') || '') }, [sp])
 
+  // The member's followed interests (synced from the server, so they appear on every device).
+  useEffect(() => {
+    api.myInterests().then(r => setFollowed(r.interests || [])).catch(() => setFollowed([]))
+  }, [])
+
   useEffect(() => {
     if (mode !== 'interests' && term) {
       api.search(term).then(r => setUsers(r.users || [])).catch(() => setUsers([]))
@@ -33,9 +39,19 @@ export default function Search() {
     }
   }, [term, mode])
 
+  // Interest feed — fresh posts aggregated from everything the member follows.
+  useEffect(() => {
+    if (tab !== 'feed') return
+    setFeedLoading(true)
+    api.interestsFeed()
+      .then(r => setFeed(Array.isArray(r) ? r : []))
+      .catch(() => setFeed([]))
+      .finally(() => setFeedLoading(false))
+  }, [tab])
+
   const filteredInterests = useMemo(() => {
     if (mode === 'people') return []
-    if (!term) return mode === 'interests' ? INTERESTS : []
+    if (!term) return INTERESTS
     return INTERESTS.filter(i => i.toLowerCase().includes(term))
   }, [term, mode])
 
@@ -44,15 +60,15 @@ export default function Search() {
     setSp(q ? { q } : {})
   }
 
-  const showPeople = mode !== 'interests' && !!term
-  const showInterests = mode !== 'people' && (mode === 'interests' || !!term)
+  const showPeople = mode !== 'interests'
+  const showInterests = mode !== 'people'
 
   return (
     <div>
       <div className="sticky top-0 z-30 bg-ink/80 backdrop-blur border-b border-edge px-4 pb-4 pt-[calc(1rem+env(safe-area-inset-top))]">
         <h1 className="font-extrabold text-2xl mb-3">Find</h1>
 
-        {/* Tabs: Discover (search) vs Choices (opt-in discovery) */}
+        {/* Tabs: Discover (search) vs Interest Feed */}
         <div className="flex gap-2 mb-3">
           <button
             onClick={() => setTab('discover')}
@@ -64,22 +80,13 @@ export default function Search() {
             <Compass className="h-4 w-4" /> Discover
           </button>
           <button
-            onClick={() => setTab('choices')}
-            data-testid="find-tab-choices"
+            onClick={() => setTab('feed')}
+            data-testid="find-tab-feed"
             className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-semibold transition ${
-              tab === 'choices' ? 'bg-brand text-white' : 'bg-panel border border-edge text-slate-400 hover:text-white'
+              tab === 'feed' ? 'bg-brand text-white' : 'bg-panel border border-edge text-slate-400 hover:text-white'
             }`}
           >
-            <Sparkles className="h-4 w-4" /> Choices
-          </button>
-          <button
-            onClick={() => setTab('streamers')}
-            data-testid="find-tab-streamers"
-            className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-semibold transition ${
-              tab === 'streamers' ? 'bg-brand text-white' : 'bg-panel border border-edge text-slate-400 hover:text-white'
-            }`}
-          >
-            <Radio className="h-4 w-4" /> Streamers
+            <Star className="h-4 w-4" /> Interest Feed
           </button>
         </div>
 
@@ -97,18 +104,51 @@ export default function Search() {
         )}
       </div>
 
-      {/* CHOICES TAB (Interest Feed now lives in Feed → Interests) */}
-      {tab === 'choices' && (
-        <div data-testid="find-choices-panel">
-          <Choices embedded />
+      {/* INTEREST FEED TAB */}
+      {tab === 'feed' && (
+        <div className="p-4 space-y-4" data-testid="interest-feed">
+          {feedLoading ? (
+            <div className="grid place-items-center py-16 text-slate-500"><Loader2 className="h-6 w-6 animate-spin" /></div>
+          ) : feed.length > 0 ? (
+            feed.map(p => <PostCard key={p.id} post={p} />)
+          ) : (
+            <div className="text-center text-slate-500 py-16" data-testid="interest-feed-empty">
+              <p className="font-medium text-slate-400">Your interest feed is quiet</p>
+              <p className="text-sm mt-1">
+                {followed.length === 0
+                  ? 'Follow interests in Discover to see fresh posts here.'
+                  : 'No recent posts from your interests yet — check back soon.'}
+              </p>
+            </div>
+          )}
         </div>
       )}
 
-      {tab === 'streamers' && <FindStreamers />}
-
-      {/* DISCOVER TAB — results only appear once you type */}
-      {tab === 'discover' && raw && (
+      {/* DISCOVER TAB */}
+      {tab === 'discover' && (
         <div className="p-4 space-y-6">
+          {/* FOLLOWING — quick access to the interests you follow */}
+          {!raw && followed.length > 0 && (
+            <section data-testid="following-section">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="grid place-items-center h-7 w-7 rounded-lg bg-amber-400/15 text-amber-300"><Star className="h-4 w-4" /></span>
+                <h2 className="font-semibold tracking-wide text-slate-300">FOLLOWING</h2>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {followed.map(name => (
+                  <button
+                    key={name}
+                    onClick={() => nav(`/interest/${encodeURIComponent(name)}`)}
+                    data-testid={`following-chip-${name.toLowerCase()}`}
+                    className="px-4 py-2 rounded-full bg-brand/15 border border-brand/40 text-white hover:bg-brand/25 transition font-medium"
+                  >
+                    @{name}
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+
           {/* PEOPLE — found using # */}
           {showPeople && (
             <section data-testid="people-section">
@@ -137,7 +177,9 @@ export default function Search() {
                 ) : (
                   <p className="text-sm text-slate-500">No people found for “{term}”.</p>
                 )
-              ) : null}
+              ) : (
+                <p className="text-sm text-slate-500">Type <span className="text-brand font-medium">#</span> and a name or handle to find people.</p>
+              )}
             </section>
           )}
 

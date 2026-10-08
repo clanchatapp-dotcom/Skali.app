@@ -3,15 +3,8 @@ export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
     extend: {
-      fontFamily: {
-        sans: ['Outfit', 'Inter', 'system-ui', 'sans-serif'],
-        display: ['Anton', 'Impact', 'Outfit', 'sans-serif'],
-      },
+      fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
       colors: {
-        neon: {
-          pink: 'rgb(var(--neon-pink) / <alpha-value>)',
-          cyan: 'rgb(var(--neon-cyan) / <alpha-value>)',
-        },
         ink: 'rgb(var(--ink) / <alpha-value>)',
         panel: 'rgb(var(--panel) / <alpha-value>)',
         panel2: 'rgb(var(--panel2) / <alpha-value>)',

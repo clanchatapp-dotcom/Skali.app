@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { X, ChevronLeft, ChevronRight } from 'lucide-react'
+import { createPortal } from 'react-dom'
+import { X, ChevronLeft, ChevronRight, Download, Check, Loader2 } from 'lucide-react'
+import { saveMedia } from '../lib/saveMedia'
+import { showToast } from '../lib/toast'
+import { recordSaved } from '../lib/savedMedia'
 
 type Item = { url: string; type: string }
 
@@ -8,12 +12,15 @@ type Item = { url: string; type: string }
 //  - swipe DOWN to dismiss
 //  - swipe LEFT/RIGHT (or arrows) to move between a person's photos/videos
 //  - pinch-to-zoom + drag-to-pan on photos (double-tap toggles 2x)
-export default function MediaLightbox({ items, index = 0, onClose }: { items: Item[]; index?: number; onClose: () => void }) {
+//  - optional Save-to-device button (allowSave)
+export default function MediaLightbox({ items, index = 0, onClose, allowSave = false }: { items: Item[]; index?: number; onClose: () => void; allowSave?: boolean }) {
   const [idx, setIdx] = useState(index)
   const [scale, setScale] = useState(1)
   const [tx, setTx] = useState(0)
   const [ty, setTy] = useState(0)
   const [dragging, setDragging] = useState(false)
+  const [mounted, setMounted] = useState(false)
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'done'>('idle')
 
   const g = useRef<{ mode: string | null; startX: number; startY: number; lastX: number; lastY: number; baseScale: number; startDist: number; baseTx: number; baseTy: number }>({
     mode: null, startX: 0, startY: 0, lastX: 0, lastY: 0, baseScale: 1, startDist: 0, baseTx: 0, baseTy: 0,
@@ -37,6 +44,23 @@ export default function MediaLightbox({ items, index = 0, onClose }: { items: It
     document.body.style.overflow = 'hidden'
     return () => { document.removeEventListener('keydown', onKey); document.body.style.overflow = prev }
   }, [onClose, items.length])
+
+  // Smooth scale-in entrance ("expand" the media into view).
+  useEffect(() => { const t = requestAnimationFrame(() => setMounted(true)); return () => cancelAnimationFrame(t) }, [])
+
+  const onSave = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (saveState === 'saving') return
+    setSaveState('saving')
+    try {
+      const r = await saveMedia(cur.url)
+      setSaveState('done'); setTimeout(() => setSaveState('idle'), 1800)
+      recordSaved(cur.url, cur.type)
+      showToast(r === 'saved' ? 'Saved to your device' : 'Opened — long-press to save', r === 'saved' ? 'success' : 'info')
+    } catch {
+      setSaveState('idle'); showToast('Could not save this media', 'error')
+    }
+  }
 
   const dist = (t: React.TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY)
 
@@ -88,7 +112,7 @@ export default function MediaLightbox({ items, index = 0, onClose }: { items: It
 
   const fade = (g.current.mode === 'swipe' && scale === 1) ? Math.max(0.2, 1 - Math.abs(ty) / 450) : 1
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-[90] grid place-items-center"
       style={{ background: `rgba(0,0,0,${0.96 * fade})` }}
@@ -103,6 +127,17 @@ export default function MediaLightbox({ items, index = 0, onClose }: { items: It
       >
         <X className="h-6 w-6" />
       </button>
+
+      {allowSave && (
+        <button
+          onClick={onSave}
+          data-testid="lightbox-save"
+          aria-label="Save to device"
+          className="absolute right-16 top-[calc(0.75rem+env(safe-area-inset-top))] z-20 h-10 w-10 grid place-items-center rounded-full bg-black/60 text-white hover:bg-black/80 transition"
+        >
+          {saveState === 'saving' ? <Loader2 className="h-5 w-5 animate-spin" /> : saveState === 'done' ? <Check className="h-5 w-5 text-emerald-400" /> : <Download className="h-5 w-5" />}
+        </button>
+      )}
 
       {items.length > 1 && (
         <span className="absolute left-4 top-[calc(0.9rem+env(safe-area-inset-top))] z-20 text-sm text-white/85 bg-black/50 px-2.5 py-1 rounded-full">{idx + 1} / {items.length}</span>
@@ -124,7 +159,7 @@ export default function MediaLightbox({ items, index = 0, onClose }: { items: It
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
         onDoubleClick={onDouble}
-        style={{ transform: `translate(${tx}px, ${ty}px) scale(${scale})`, transition: dragging ? 'none' : 'transform .2s ease' }}
+        style={{ transform: `translate(${tx}px, ${ty}px) scale(${scale * (mounted ? 1 : 0.9)})`, opacity: mounted ? 1 : 0, transition: dragging ? 'none' : 'transform .2s ease, opacity .2s ease' }}
       >
         {cur.type === 'video'
           ? <video src={cur.url} controls autoPlay playsInline className="max-h-[85vh] max-w-[92vw] rounded-lg" />
@@ -136,6 +171,7 @@ export default function MediaLightbox({ items, index = 0, onClose }: { items: It
           {items.map((_, i) => <span key={i} className={`h-1.5 rounded-full transition-all ${i === idx ? 'w-4 bg-white' : 'w-1.5 bg-white/40'}`} />)}
         </div>
       )}
-    </div>
+    </div>,
+    document.body,
   )
 }

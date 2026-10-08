@@ -1,13 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Settings as SettingsIcon, ShieldCheck, MessageCircle, LogOut, Trash2, Loader2, Check, Plus, User as UserIcon, AlertTriangle, Lock, Flame, Sparkles, MessageSquare, Swords, Pill, Eye, KeyRound, Bell, Users2, ChevronRight } from 'lucide-react'
+import { Settings as SettingsIcon, ShieldCheck, MessageCircle, LogOut, Trash2, Loader2, Check, Plus, User as UserIcon, AlertTriangle, Lock, Flame, Sparkles, MessageSquare, Swords, Pill, Eye, KeyRound, Bell, Users2, ChevronRight, Bookmark } from 'lucide-react'
 import { api } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { Avatar } from '../lib/ui'
 import AccountBadge, { ACCOUNT_META } from '../components/AccountBadge'
 import RoleBadge, { ROLE_META } from '../components/RoleBadge'
 import { Capacitor } from '@capacitor/core'
-import InterestsManager from '../components/InterestsManager'
 
 const IS_NATIVE = (() => { try { return Capacitor.isNativePlatform() } catch { return false } })()
 
@@ -54,7 +53,6 @@ export default function Settings() {
   const nav = useNavigate()
   const [p, setP] = useState<any>(null)
   const [loading, setLoading] = useState(true)
-  const [prefTab, setPrefTab] = useState<'comfort' | 'interests'>('comfort')
   const [saving, setSaving] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [savedName, setSavedName] = useState(false)
@@ -166,9 +164,8 @@ export default function Settings() {
 
   if (loading) return <div className="h-full grid place-items-center py-20"><Loader2 className="h-6 w-6 animate-spin text-slate-500" /></div>
 
-  const isSupportBot = !!(user as any)?.is_support_bot
-  const isStaff = !!(user?.is_admin || (user as any)?.can_moderate || isSupportBot)
-  const adminLabel = user?.is_admin ? 'Admin panel' : (user as any)?.can_moderate ? 'Moderation' : 'Support inbox'
+  const isStaff = !!(user?.is_admin || (user as any)?.can_moderate)
+  const adminLabel = user?.is_admin ? 'Admin panel' : 'Moderation'
 
   return (
     <div className="max-w-2xl mx-auto w-full h-full min-h-0 flex flex-col overflow-hidden">
@@ -337,30 +334,20 @@ export default function Settings() {
               </div>
               <ChevronRight className="h-5 w-5 text-slate-500" />
             </button>
+
+            <button onClick={() => nav('/saved')} data-testid="settings-open-saved" className="w-full bg-panel border border-edge rounded-2xl p-5 flex items-center gap-3 hover:bg-white/5 transition text-left">
+              <Bookmark className="h-5 w-5 text-brand shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="font-medium">Saved</div>
+                <div className="text-xs text-slate-500">Photos & videos you've saved to this device.</div>
+              </div>
+              <ChevronRight className="h-5 w-5 text-slate-500" />
+            </button>
           </>
         )}
 
         {/* PREFERENCES TAB — Comfort Zone */}
         {tab === 'preferences' && (
-          <div className="flex gap-2" data-testid="preferences-subtabs">
-            {(['comfort', 'interests'] as const).map(k => (
-              <button key={k} onClick={() => setPrefTab(k)} data-testid={`preferences-tab-${k}`}
-                className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-colors ${prefTab === k ? 'bg-brand text-white' : 'bg-panel border border-edge text-slate-400 hover:text-white'}`}>
-                {k === 'comfort' ? 'Comfort Zone' : 'Interests'}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {tab === 'preferences' && prefTab === 'interests' && (
-          <section className="bg-panel border border-edge rounded-2xl p-5">
-            <h2 className="text-lg font-extrabold tracking-wide">Interests</h2>
-            <p className="text-sm text-slate-400 mt-1 mb-4">Interests you follow fill your Feed's Interests tab. Tap one to unfollow, or add more below.</p>
-            <InterestsManager />
-          </section>
-        )}
-
-        {tab === 'preferences' && prefTab === 'comfort' && (
           <section className="bg-panel border border-edge rounded-2xl p-5">
             <h2 className="text-lg font-extrabold tracking-wide">Comfort Zone</h2>
             <p className="text-sm text-slate-400 mt-1 mb-3">Choose what shows up in your feed. We'll soften or hide anything you turn off.</p>
@@ -437,7 +424,7 @@ export default function Settings() {
                 <span className="text-xs text-brand font-medium">View plans</span>
               </button>
               {isStaff && (
-                <button onClick={() => nav('/admin')} data-testid="settings-admin-link" className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-gradient-to-r from-brand/20 to-violet-600/10 border border-brand/40 hover:border-brand transition">
+                <button onClick={() => nav('/admin')} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-gradient-to-r from-brand/20 to-violet-600/10 border border-brand/40 hover:border-brand transition">
                   <ShieldCheck className="h-5 w-5 text-brand" />
                   <span className="font-medium flex-1 text-left">{adminLabel}</span>
                   <ChevronRight className="h-5 w-5 text-slate-500" />

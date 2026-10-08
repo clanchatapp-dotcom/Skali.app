@@ -3,6 +3,7 @@ import { Gamepad2, MessageSquare, Music, Palette, Camera, Trophy, Radio } from '
 export type LiveCategory = { key: string; label: string; icon: any; accent: string }
 
 // Twitch-style categories — labels & icons mirror the backend LIVE_CATEGORIES keys.
+// `accent` is a tailwind text/ring hue used on the category chips & badges.
 export const LIVE_CATEGORIES: LiveCategory[] = [
   { key: 'gaming', label: 'Gaming', icon: Gamepad2, accent: 'text-violet-300' },
   { key: 'just_chatting', label: 'Just Chatting', icon: MessageSquare, accent: 'text-sky-300' },

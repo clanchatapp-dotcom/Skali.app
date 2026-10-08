@@ -17,7 +17,6 @@ import Activity from './pages/Activity'
 import Admin from './pages/Admin'
 import Verify from './pages/Verify'
 import CreatorHub from './pages/CreatorHub'
-import CreatorAnalytics from './pages/CreatorAnalytics'
 import Choices from './pages/Choices'
 import Settings from './pages/Settings'
 import Plans from './pages/Plans'
@@ -25,8 +24,7 @@ import Connections from './pages/Connections'
 import Groups from './pages/Groups'
 import Reels from './pages/Reels'
 import Live from './pages/Live'
-import StreamWatch from './pages/StreamWatch'
-import StreamBoundary from './components/stream/StreamBoundary'
+import Saved from './pages/Saved'
 import AuthCallback from './pages/AuthCallback'
 import Legal from './pages/Legal'
 import { Loader2 } from 'lucide-react'
@@ -64,9 +62,6 @@ export default function App() {
       ) : !user ? (
         <Route path="*" element={<Login />} />
       ) : (
-        <>
-        <Route path="/creator/analytics" element={<CreatorAnalytics />} />
-        <Route path="/watch/:liveId" element={<StreamBoundary label="Stream player"><StreamWatch /></StreamBoundary>} />
         <Route element={<Layout />}>
           <Route path="/" element={<Feed />} />
           <Route path="/search" element={<SearchPage />} />
@@ -84,12 +79,12 @@ export default function App() {
           <Route path="/groups" element={<Groups />} />
           <Route path="/reels" element={<Reels />} />
           <Route path="/live" element={<Live />} />
+          <Route path="/saved" element={<Saved />} />
           <Route path="/admin" element={<Admin />} />
           <Route path="/u/:handle/links" element={<Links />} />
           <Route path="/u/:handle" element={<Profile />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
-        </>
       )}
       </Routes>
     </>

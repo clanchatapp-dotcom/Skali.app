@@ -202,11 +202,6 @@ async function configureAndroidPush() {
 
         if (data?.url) {
           try {
-            if (String(data.url).startsWith('/') && data.url !== '/') {
-              window.history.pushState({}, '', data.url)
-              window.dispatchEvent(new PopStateEvent('popstate'))
-              return
-            }
             window.location.hash = data.url
           } catch {
             // Ignore navigation errors.

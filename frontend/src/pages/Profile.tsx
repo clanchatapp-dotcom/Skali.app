@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { Avatar, timeAgo, Linkify } from '../lib/ui'
@@ -8,10 +8,9 @@ import AdultBadge from '../components/AdultBadge'
 import AccountBadge from '../components/AccountBadge'
 import { ProfileStoryAvatar, AddStoryButton } from '../components/Stories'
 import { useAuth } from '../lib/auth'
-import { ArrowLeft, MoreHorizontal, Lock, Loader2, Check, Link as LinkIcon, Camera, Trash2, Ban, VolumeX, ShieldOff, Plus, MessagesSquare, Send, X, Pin, Settings as SettingsIcon, ChevronRight, Heart, Store, Gift, Radio, BarChart3, Bell, BellOff } from 'lucide-react'
+import { ArrowLeft, MoreHorizontal, Lock, Loader2, Check, Link as LinkIcon, Camera, Trash2, Ban, VolumeX, ShieldOff, Plus, MessagesSquare, Send, X, Pin, Settings as SettingsIcon, ChevronRight, Heart, Store, Gift } from 'lucide-react'
 
-// Shop tab removed from this row — Shop is reachable via My Links → Shop (ShopTab is exported below).
-const TABS = ['media', 'wall', 'boards', 'audio'] as const
+const TABS = ['media', 'wall', 'boards', 'shop', 'audio'] as const
 type Tab = typeof TABS[number]
 export default function Profile() {
   const { handle } = useParams()
@@ -132,7 +131,7 @@ export default function Profile() {
           <div className="flex items-center gap-3">
             <div className="relative shrink-0 flex flex-col items-center">
               <div className="relative">
-                <ProfileStoryAvatar profile={p} size={76} />
+                <ProfileStoryAvatar profile={p} size={60} />
                 {p.is_self && (
                   <label className="absolute -bottom-0.5 -right-0.5 h-7 w-7 rounded-full bg-brand grid place-items-center cursor-pointer shadow-md shadow-violet-900/40 ring-2 ring-ink hover:brightness-110 transition">
                     {uploadingAvatar ? <Loader2 className="h-3.5 w-3.5 text-white animate-spin" /> : <Camera className="h-3.5 w-3.5 text-white" />}
@@ -147,35 +146,17 @@ export default function Profile() {
             </div>
 
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5 min-w-0">
-                <div className="min-w-0 max-w-full inline-flex flex-col">
-                  <FitName text={`#${p.handle}`} />
-                  <div className="flyer-underline w-full mt-1" data-testid="profile-name-underline" />
-                </div>
-                <AccountBadge type={p.account_type} role={p.role} verified={p.verified} size={16} />
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <h1 className="text-base sm:text-lg font-extrabold leading-tight truncate max-w-full">#{p.handle}</h1>
+                <AccountBadge type={p.account_type} role={p.role} verified={p.verified} size={14} />
               </div>
-              <div className="mt-1.5 text-sm sm:text-base text-slate-300 font-medium leading-tight whitespace-normal break-words">{p.display_name}</div>
-              {(p.is_creator || p.verified) && (
-                <div className="mt-1.5 flex items-center gap-1.5" data-testid="profile-stickers">
-                  {p.verified && <span className="flyer-sticker bg-neon-cyan text-black -rotate-3">Verified</span>}
-                  {p.is_creator && <span className="flyer-sticker bg-neon-pink text-white rotate-2">Creator</span>}
-                </div>
-              )}
+              <div className="text-sm sm:text-base text-slate-300 font-medium leading-tight whitespace-normal break-words">{p.display_name}</div>
+              {/* X-style follower/following counts — compact and never overlapping */}
+              <div className="mt-1.5 flex items-center gap-4 text-xs sm:text-sm whitespace-nowrap">
+                <span><span className="font-bold text-slate-100">{p.followers_count ?? 0}</span><span className="text-slate-400 ml-1">Followers</span></span>
+                <span><span className="font-bold text-slate-100">{p.following_count ?? 0}</span><span className="text-slate-400 ml-1">Following</span></span>
+              </div>
             </div>
-          </div>
-
-          {/* Club Flyer stat blocks */}
-          <div className="mt-3 grid grid-cols-2 gap-2 whitespace-nowrap" data-testid="profile-stat-blocks">
-            <button onClick={() => nav('/connections?tab=followers')} disabled={!p.is_self} data-testid="profile-followers-btn"
-              className="text-left rounded-xl px-3 py-2 bg-brand/15 border border-brand/40 shadow-[0_0_18px_-8px_rgb(var(--brand))] enabled:hover:bg-brand/25 enabled:active:scale-[0.98] transition-[background-color,transform]">
-              <div className="flyer-title text-2xl text-white">{p.followers_count ?? 0}</div>
-              <div className="text-[10px] uppercase tracking-widest text-slate-300 font-semibold">Followers</div>
-            </button>
-            <button onClick={() => nav('/connections?tab=following')} disabled={!p.is_self} data-testid="profile-following-btn"
-              className="text-left rounded-xl px-3 py-2 bg-neon-pink/10 border border-neon-pink/40 shadow-[0_0_18px_-8px_rgb(var(--neon-pink))] enabled:hover:bg-neon-pink/20 enabled:active:scale-[0.98] transition-[background-color,transform]">
-              <div className="flyer-title text-2xl text-white">{p.following_count ?? 0}</div>
-              <div className="text-[10px] uppercase tracking-widest text-slate-300 font-semibold">Following</div>
-            </button>
           </div>
 
           {p.bio && <p className="mt-2 text-xs text-slate-300 line-clamp-2">{p.bio}</p>}
@@ -203,10 +184,9 @@ export default function Profile() {
           {/* Actions for other profiles only */}
           {!p.is_self && (
             <div className="mt-2.5 flex flex-wrap items-center justify-center gap-2">
-              <button onClick={doFollow} className={`px-5 py-1.5 rounded-full text-sm font-semibold min-w-[110px] ${p.follow_status === 'approved' ? 'border border-edge' : p.follow_status === 'pending' ? 'border border-amber-500/40 text-amber-300' : 'bg-gradient-to-r from-brand to-neon-pink text-white'}`}>
+              <button onClick={doFollow} className={`px-5 py-1.5 rounded-full text-sm font-semibold min-w-[110px] ${p.follow_status === 'approved' ? 'border border-edge' : p.follow_status === 'pending' ? 'border border-amber-500/40 text-amber-300' : 'bg-gradient-to-r from-brand to-violet-600'}`}>
                 {p.follow_status === 'approved' ? 'Following' : p.follow_status === 'pending' ? 'Requested' : 'Follow'}
               </button>
-              {(p.follow_status === 'approved' || p.in_inner) && <LiveAlertToggle handle={p.handle} />}
               <button onClick={() => p.can_dm ? nav(`/messages/${p.handle}`) : alert('DMs are tier-gated — you need to be a Follower (with DMs on) or in their Inner Circle.')} className="px-5 py-1.5 rounded-full border border-edge text-sm font-semibold min-w-[110px] hover:bg-white/5">Message</button>
               <button onClick={invite} disabled={p.inner_status === 'accepted' || p.inner_status === 'pending'} className="px-3 py-1.5 rounded-full border border-violet-500/30 bg-violet-500/10 text-violet-300 text-xs flex items-center gap-1.5 hover:bg-violet-500/20 disabled:opacity-50">
                 <Lock className="h-3.5 w-3.5" />
@@ -228,23 +208,8 @@ export default function Profile() {
           {buy && <BuySheet mode={buy} handle={p.handle} offers={offers} onClose={() => setBuy(null)} />}
 
           {p.is_self && (
-            <div className="mt-2.5" data-testid="creator-studio">
-              <div className="text-[10px] uppercase tracking-[0.25em] text-slate-500 font-semibold text-center mb-1.5">Creator Studio</div>
-              <div className="studio-tiles">
-                <AddStoryButton onAdded={load} />
-                {p.can_go_live && (
-                <button onClick={() => nav('/live')} data-testid="creator-studio-live"
-                  className="px-4 py-1.5 rounded-full border border-rose-500/40 bg-rose-500/10 text-rose-300 text-sm font-semibold flex items-center gap-1.5 hover:bg-rose-500/20 transition-colors">
-                  <Radio className="h-4 w-4" /> Content Streaming
-                </button>
-                )}
-                {p.creator_account && (
-                  <button onClick={() => nav('/creator/analytics')} data-testid="creator-studio-analytics"
-                    className="px-3 py-1.5 rounded-full border border-edge text-sm font-semibold flex items-center gap-1.5 hover:bg-white/5 transition-colors">
-                    <BarChart3 className="h-4 w-4 text-brand" /> Analytics
-                  </button>
-                )}
-              </div>
+            <div className="mt-2.5 flex justify-center">
+              <AddStoryButton onAdded={load} />
             </div>
           )}
 
@@ -258,7 +223,7 @@ export default function Profile() {
           {TABS.map(t => (
             <button key={t} onClick={() => setTab(t)} className={`relative flex-1 min-w-[78px] px-2 py-3 text-xs sm:text-sm font-semibold uppercase tracking-wide transition ${tab === t ? 'text-white' : 'text-slate-400 hover:text-slate-200'}`}>
               {t}
-              {tab === t && <span className="absolute left-2 right-2 bottom-0 h-0.5 rounded-full bg-gradient-to-r from-brand to-neon-pink shadow-[0_0_10px_rgb(var(--neon-pink))]" />}
+              {tab === t && <span className="absolute left-2 right-2 bottom-0 h-0.5 rounded-full bg-brand" />}
             </button>
           ))}
         </div>
@@ -280,7 +245,7 @@ export default function Profile() {
             <WallTab handle={p.handle} />
           ) : tab === 'boards' ? (
             <BoardsTab handle={p.handle} isSelf={p.is_self} />
-          ) : (tab as string) === 'shop' ? (
+          ) : tab === 'shop' ? (
             <ShopTab handle={p.handle} />
           ) : current.length === 0 ? (
             <p className="text-center text-slate-500 py-14">No {tab} posts yet.</p>
@@ -297,57 +262,16 @@ export default function Profile() {
 
 /* ---- unchanged helpers below ---- */
 
-// Display name that shrinks to fit one line; only truncates once it hits the minimum size.
-function FitName({ text }: { text: string }) {
-  const ref = useRef<HTMLHeadingElement | null>(null)
-  const [size, setSize] = useState(22)
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const fit = () => {
-      let s = 22
-      el.style.fontSize = `${s}px`
-      const box = el.parentElement?.parentElement
-      const max = box ? box.clientWidth - 24 : el.clientWidth
-      while (s > 13 && el.scrollWidth > max) { s -= 1; el.style.fontSize = `${s}px` }
-      setSize(s)
-    }
-    fit()
-    const ro = new ResizeObserver(fit)
-    if (el.parentElement?.parentElement) ro.observe(el.parentElement.parentElement)
-    return () => ro.disconnect()
-  }, [text])
-  return (
-    <h1 ref={ref} style={{ fontSize: size }} data-testid="profile-flyer-title"
-      className="flyer-title leading-tight whitespace-nowrap truncate max-w-full">{text}</h1>
-  )
-}
-
-// Fans choose per creator whether they get a notification when that creator goes live (on by default).
-function LiveAlertToggle({ handle }: { handle: string }) {
-  const [on, setOn] = useState<boolean | null>(null)
-  useEffect(() => { api.getLiveAlert(handle).then((r: any) => setOn(!!r.enabled)).catch(() => setOn(true)) }, [handle])
-  if (on === null) return null
-  const toggle = async () => { const next = !on; setOn(next); try { await api.setLiveAlert(handle, next) } catch { setOn(!next) } }
-  return (
-    <button onClick={toggle} data-testid="profile-live-alert-toggle" aria-pressed={on} title={on ? 'Live alerts on' : 'Live alerts off'}
-      className={`h-8 px-3 rounded-full border text-xs font-semibold flex items-center gap-1.5 transition-colors ${on ? 'border-rose-500/40 bg-rose-500/10 text-rose-300' : 'border-edge text-slate-400 hover:bg-white/5'}`}>
-      {on ? <Bell className="h-3.5 w-3.5" /> : <BellOff className="h-3.5 w-3.5" />}{on ? 'Live alerts on' : 'Live alerts off'}
-    </button>
-  )
-}
-
 function BuySheet({ mode, handle, offers, onClose }: { mode: 'sub' | 'tip'; handle: string; offers: any; onClose: () => void }) {
   const [tier, setTier] = useState<number>(offers?.tiers?.[0]?.tier || 1)
   const [amount, setAmount] = useState('5')
-  const [promo, setPromo] = useState('')
   const [busy, setBusy] = useState(false)
   const nsfw = !!offers?.account_nsfw
   const go = async () => {
     setBusy(true)
     try {
       const body = mode === 'sub'
-        ? { product: 'inner_circle', creator_handle: handle, tier, ...(promo.trim() ? { promo_code: promo.trim() } : {}) }
+        ? { product: 'inner_circle', creator_handle: handle, tier }
         : { product: 'tip', creator_handle: handle, amount: parseFloat(amount) }
       const r = await api.checkoutSession(body)
       if (r.checkout_url) window.open(r.checkout_url, '_blank')
@@ -370,8 +294,6 @@ function BuySheet({ mode, handle, offers, onClose }: { mode: 'sub' | 'tip'; hand
                 <span className="font-bold">£{Number(t.price).toFixed(2)}/mo</span>
               </button>
             ))}
-            <input value={promo} onChange={e => setPromo(e.target.value.toUpperCase())} maxLength={20} placeholder="Promo code (optional)" data-testid="buy-promo-code"
-              className="w-full bg-ink border border-edge rounded-xl px-3 py-2.5 outline-none focus:border-brand font-mono text-sm" />
           </div>
         ) : (
           <div className="mb-4">
@@ -389,7 +311,7 @@ function BuySheet({ mode, handle, offers, onClose }: { mode: 'sub' | 'tip'; hand
   )
 }
 
-export function ShopTab({ handle }: { handle: string }) {
+function ShopTab({ handle }: { handle: string }) {
   const [data, setData] = useState<any>(null)
   const [busy, setBusy] = useState<string>('')
   useEffect(() => { api.creatorPublicShop(handle).then(setData).catch(() => setData({ products: [] })) }, [handle])

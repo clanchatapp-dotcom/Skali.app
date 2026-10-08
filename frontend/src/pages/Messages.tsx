@@ -1,14 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { api, getToken, wsDmUrl } from '../lib/api'
-import { Avatar, Linkify } from '../lib/ui'
+import { Avatar, ZoomAvatar, Linkify } from '../lib/ui'
 import { useAuth } from '../lib/auth'
 import CallModal from '../components/CallModal'
 import RoleBadge from '../components/RoleBadge'
 import AdultBadge from '../components/AdultBadge'
 import AccountBadge from '../components/AccountBadge'
-import AvatarMenu from '../components/AvatarMenu'
-import ActivityPill from '../components/ActivityPill'
 import {
   secureOn,
   secureOff
@@ -34,8 +32,12 @@ import {
   Smile,
   Pencil,
   Plus,
-  Camera
+  Camera,
+  Download
 } from 'lucide-react'
+import { saveMedia } from '../lib/saveMedia'
+import { showToast } from '../lib/toast'
+import { recordSaved } from '../lib/savedMedia'
 
 export default function Messages() {
   const { handle } = useParams()
@@ -1611,14 +1613,33 @@ export default function Messages() {
 
             {/* Larger close button */}
 
-            <button
-              onClick={closeViewer}
-              className="h-12 w-12 grid place-items-center rounded-full bg-white/10 hover:bg-white/20 active:bg-white/25 shrink-0"
-              title="Close"
-              aria-label="Close photo"
-            >
-              <X className="h-7 w-7" />
-            </button>
+            <div className="flex items-center gap-1 shrink-0">
+              {viewer.allowSave && !viewer.viewOnce && viewer.url && (
+                <button
+                  onClick={async () => {
+                    try {
+                      const r = await saveMedia(viewer.url)
+                      recordSaved(viewer.url, viewer.type || 'image')
+                      showToast(r === 'saved' ? 'Saved to your device' : 'Opened — long-press to save', r === 'saved' ? 'success' : 'info')
+                    } catch { showToast('Could not save this media', 'error') }
+                  }}
+                  data-testid="dm-media-save"
+                  className="h-12 w-12 grid place-items-center rounded-full bg-white/10 hover:bg-white/20 active:bg-white/25"
+                  title="Save to device"
+                  aria-label="Save to device"
+                >
+                  <Download className="h-6 w-6" />
+                </button>
+              )}
+              <button
+                onClick={closeViewer}
+                className="h-12 w-12 grid place-items-center rounded-full bg-white/10 hover:bg-white/20 active:bg-white/25"
+                title="Close"
+                aria-label="Close photo"
+              >
+                <X className="h-7 w-7" />
+              </button>
+            </div>
           </div>
 
           {/* Swipeable media area */}
@@ -1725,9 +1746,8 @@ export default function Messages() {
             : 'flex'
         } flex-col w-full lg:w-80 shrink-0 border-r border-edge`}
       >
-        <div className="px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))] border-b border-edge flex items-center gap-3">
-          <span className="font-extrabold text-xl">Messages</span>
-          <ActivityPill />
+        <div className="px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))] border-b border-edge font-extrabold text-xl">
+          Messages
         </div>
 
         <button
@@ -1809,7 +1829,15 @@ export default function Messages() {
                   : ''
               }`}
             >
-              <AvatarMenu user={t.user} testId={`thread-avatar-${t.user.handle}`} />
+              <Avatar
+                id={t.user.id}
+                name={
+                  t.user.display_name
+                }
+                url={
+                  t.user.avatar_url
+                }
+              />
 
               <div className="min-w-0 flex-1">
                 <div className="font-medium truncate flex items-center gap-1.5">
@@ -1895,10 +1923,20 @@ export default function Messages() {
                     <Bookmark className="h-5 w-5 text-white" />
                   </div>
                 ) : (
-                  <AvatarMenu
-                    user={{ ...thread.peer, handle: thread.peer.handle || handle }}
+                  <ZoomAvatar
+                    id={
+                      thread.peer.id
+                    }
+                    name={
+                      thread.peer
+                        .display_name
+                    }
+                    url={
+                      thread.peer
+                        .avatar_url
+                    }
                     size={38}
-                    testId="dm-header-avatar"
+                    testID="chat-header-avatar"
                   />
                 )}
 
@@ -2151,8 +2189,8 @@ export default function Messages() {
                               m.deleted
                                 ? 'bg-white/5 border border-edge text-slate-500 italic'
                                 : m.mine
-                                  ? 'bg-gradient-to-br from-brand via-violet-600 to-neon-pink/90 text-white rounded-br-sm shadow-[0_0_22px_-8px_rgb(var(--neon-pink)/.8)]'
-                                  : 'bg-white/[0.06] backdrop-blur border border-white/10 rounded-bl-sm'
+                                  ? 'bg-gradient-to-br from-brand to-violet-600 text-white rounded-br-sm'
+                                  : 'bg-white/5 border border-edge rounded-bl-sm'
                             }`
                       }`}
                     >

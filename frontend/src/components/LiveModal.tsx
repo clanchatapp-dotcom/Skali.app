@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { useWatchHeartbeat } from '../lib/watchTime'
+import { useNavigate } from 'react-router-dom'
 import {
   LiveKitRoom,
   RoomAudioRenderer,
@@ -8,23 +8,16 @@ import {
   useTracks,
   useLocalParticipant,
   useConnectionState,
-  useDataChannel,
   useRemoteParticipants,
 } from '@livekit/components-react'
 import { ConnectionState, Track } from 'livekit-client'
 import { api, getToken, wsLiveUrl } from '../lib/api'
-
-// Chat + hearts travel over LiveKit's own data channel (it is already connected
-// for the video, so it works even where the separate side-channel WebSocket is
-// blocked — e.g. inside the Android WebView). TextEncoder/Decoder are reused.
-const LIVE_DC_TOPIC = 'skali-live'
-const dcEncoder = new TextEncoder()
-const dcDecoder = new TextDecoder()
 import { Avatar } from '../lib/ui'
+import { showToast } from '../lib/toast'
 import { LIVE_CATEGORIES, categoryOf } from '../lib/liveCategories'
 import {
   X, Loader2, Heart, Send, Radio, Users, Users2, Globe2, Save, Lock,
-  Mic, MicOff, Video, VideoOff, RotateCcw,
+  Mic, MicOff, Video, VideoOff, RotateCcw, Hand,
 } from 'lucide-react'
 
 type Audience = 'public' | 'followers' | 'inner' | 'group'
@@ -45,8 +38,11 @@ function FloatingHearts({ hearts }: { hearts: { id: number; left: number }[] }) 
   )
 }
 
+// A single chat row, reused by the mobile overlay and the desktop sidebar.
 function ChatRow({ m }: { m: any }) {
-  if (m.type === 'system') return <div className="text-white/60 text-xs">{m.text}</div>
+  if (m.type === 'system') {
+    return <div className="text-white/60 text-xs">{m.text}</div>
+  }
   return (
     <div className="text-sm leading-snug break-words">
       <span className="text-brand font-semibold mr-1.5">{m.who?.display_name || m.who?.handle}</span>
@@ -56,8 +52,9 @@ function ChatRow({ m }: { m: any }) {
 }
 
 // ---------------------------------------------------------------------------
-// Inner stage: host video + chat/hearts. Mobile keeps the overlay; desktop
-// adds a Twitch-style chat rail. Chat + hearts ride the LiveKit data channel.
+// Inner stage: renders the host's video and the chat / hearts overlay. Works
+// for both the host (publishes camera) and viewers (subscribe only).
+// Responsive: mobile keeps the overlay; desktop adds a Twitch-style chat rail.
 // ---------------------------------------------------------------------------
 function LiveStage({
   liveId, isHost, host, title, category, audience, save, onClose,
@@ -68,6 +65,10 @@ function LiveStage({
   const { localParticipant } = useLocalParticipant()
   const connectionState = useConnectionState()
   const connected = connectionState === ConnectionState.Connected
+  const nav = useNavigate()
+  const remotes = useRemoteParticipants()
+  const viewerList = remotes.filter(p => p.identity !== (host?.id))
+  const [showViewers, setShowViewers] = useState(false)
 
   const [messages, setMessages] = useState<any[]>([])
   const [viewers, setViewers] = useState(0)
@@ -78,6 +79,7 @@ function LiveStage({
   const [facing, setFacing] = useState<'user' | 'environment'>('user')
   const [ended, setEnded] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [kbOffset, setKbOffset] = useState(0)
 
   const wsRef = useRef<WebSocket | null>(null)
   const chatEndRef = useRef<HTMLDivElement | null>(null)
@@ -90,14 +92,11 @@ function LiveStage({
   const CatIcon = cat.icon
 
   const cameraTracks = useTracks([Track.Source.Camera], { onlySubscribed: true })
-  const remoteParticipants = useRemoteParticipants()
-  const liveCount = Math.max(viewers, remoteParticipants.length + 1)
   const hostCam = useMemo(() => {
     if (isHost) return cameraTracks.find(t => t.participant.identity === localParticipant.identity)
     return cameraTracks.find(t => t.participant.identity !== localParticipant.identity)
   }, [cameraTracks, isHost, localParticipant.identity])
 
-  // Side-channel WS: live viewer count, join notices and end events only.
   useEffect(() => {
     const token = getToken()
     if (!token) return
@@ -113,16 +112,25 @@ function LiveStage({
       ws.onmessage = ev => {
         try {
           const m = JSON.parse(ev.data)
-          if (m.type === 'system') setMessages(prev => [...prev.slice(-120), m])
+          if (m.type === 'chat') setMessages(prev => [...prev.slice(-120), m])
+          else if (m.type === 'system') setMessages(prev => [...prev.slice(-120), m])
           else if (m.type === 'viewers') setViewers(m.count || 0)
-          else if (m.type === 'live_ended' && !isHost) setEnded(true)
+          else if (m.type === 'heart') {
+            heartId.current += 1
+            const id = heartId.current
+            setHearts(prev => [...prev, { id, left: 8 + Math.random() * 60 }])
+            setTimeout(() => setHearts(prev => prev.filter(h => h.id !== id)), 2600)
+          } else if (m.type === 'live_ended' && !isHost) {
+            setEnded(true)
+          }
         } catch { /* ignore */ }
       }
       ws.onclose = () => {
         if (wsRef.current === ws) wsRef.current = null
         if (closed) return
         retry += 1
-        reconnectTimer = setTimeout(open, Math.min(1000 * retry, 5000))
+        const delay = Math.min(1000 * retry, 5000)
+        reconnectTimer = setTimeout(open, delay)
       }
       ws.onerror = () => { try { ws.close() } catch { /* noop */ } }
     }
@@ -136,26 +144,23 @@ function LiveStage({
     }
   }, [liveId, isHost])
 
-  // Chat + hearts over the LiveKit data channel (reliable P2P; no self-echo).
-  const { send: sendData } = useDataChannel(LIVE_DC_TOPIC, (msg) => {
-    try {
-      const d = JSON.parse(dcDecoder.decode(msg.payload))
-      const name = (msg.from?.name || '').replace(/^#/, '') || msg.from?.identity || 'Guest'
-      if (d.t === 'chat' && d.text) {
-        setMessages(prev => [...prev.slice(-120), { type: 'chat', who: { display_name: name }, text: String(d.text) }])
-      } else if (d.t === 'heart') {
-        heartId.current += 1
-        const id = heartId.current
-        setHearts(prev => [...prev, { id, left: 8 + Math.random() * 60 }])
-        setTimeout(() => setHearts(prev => prev.filter(h => h.id !== id)), 2600)
-      }
-    } catch { /* ignore */ }
-  })
-
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
     chatEndRef2.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  useEffect(() => {
+    const vv = (window as any).visualViewport
+    if (!vv) return
+    const onResize = () => {
+      const overlap = Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
+      setKbOffset(overlap)
+    }
+    vv.addEventListener('resize', onResize)
+    vv.addEventListener('scroll', onResize)
+    onResize()
+    return () => { vv.removeEventListener('resize', onResize); vv.removeEventListener('scroll', onResize) }
+  }, [])
 
   const startRecording = useCallback(() => {
     if (!isHost || !save || recorderRef.current) return
@@ -219,21 +224,32 @@ function LiveStage({
     }
   }
 
-  const myName = () => (localParticipant.name || '').replace(/^#/, '') || 'You'
-
   const sendChat = () => {
     const t = chatText.trim()
-    if (!t) return
-    setMessages(prev => [...prev.slice(-120), { type: 'chat', who: { display_name: myName() }, text: t }])
-    try { sendData(dcEncoder.encode(JSON.stringify({ t: 'chat', text: t })), { reliable: true }) } catch { /* noop */ }
+    if (!t || !wsRef.current || wsRef.current.readyState !== 1) return
+    wsRef.current.send(JSON.stringify({ type: 'chat', text: t }))
     setChatText('')
   }
   const sendHeart = () => {
-    heartId.current += 1
-    const id = heartId.current
-    setHearts(prev => [...prev, { id, left: 8 + Math.random() * 60 }])
-    setTimeout(() => setHearts(prev => prev.filter(h => h.id !== id)), 2600)
-    try { sendData(dcEncoder.encode(JSON.stringify({ t: 'heart' })), { reliable: true }) } catch { /* noop */ }
+    wsRef.current?.readyState === 1 && wsRef.current.send(JSON.stringify({ type: 'heart' }))
+  }
+  const greet = (p: { name?: string; identity: string }) => {
+    const nm = (p.name || p.identity || '').replace(/^#/, '')
+    if (wsRef.current?.readyState === 1) {
+      wsRef.current.send(JSON.stringify({ type: 'chat', text: `👋 Hey ${nm}!` }))
+    }
+  }
+  const sendWave = () => {
+    if (wsRef.current?.readyState === 1) {
+      wsRef.current.send(JSON.stringify({ type: 'chat', text: '👋' }))
+    }
+  }
+  const openProfile = (p: { name?: string; identity: string }) => {
+    const handle = (p.name || '').replace(/^#/, '').trim()
+    if (!handle) return
+    setShowViewers(false)
+    onClose()
+    nav(`/u/${handle}`)
   }
 
   const toggleMic = async () => {
@@ -255,6 +271,7 @@ function LiveStage({
   }
 
   const hostName = host?.display_name || (isHost ? 'You' : 'Host')
+  const liveCount = viewers || viewerList.length
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-black md:flex md:flex-row">
@@ -262,6 +279,7 @@ function LiveStage({
 
       {/* ---- Video column ---- */}
       <div className="relative flex-1 min-w-0 h-full overflow-hidden">
+        {/* Video */}
         <div className="absolute inset-0">
           {hostCam && hostCam.publication?.isSubscribed ? (
             <VideoTrack trackRef={hostCam} className="h-full w-full object-cover md:object-contain" />
@@ -275,10 +293,10 @@ function LiveStage({
           )}
         </div>
 
-        {/* Top bar */}
+        {/* Top bar: LIVE + host + category + viewers + close */}
         <div className="absolute top-0 inset-x-0 z-30 pt-[calc(0.6rem+env(safe-area-inset-top))] px-3">
           <div className="flex items-center gap-2">
-            <span className="neon-live flex items-center gap-1.5 bg-rose-600 text-white text-xs font-bold px-2 py-1 rounded-md shadow" data-testid="live-badge">
+            <span className="flex items-center gap-1.5 bg-rose-600 text-white text-xs font-bold px-2 py-1 rounded-md shadow" data-testid="live-badge">
               <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" /> LIVE
             </span>
             <div className="flex items-center gap-2 bg-black/45 backdrop-blur rounded-full pl-1 pr-3 py-1 min-w-0">
@@ -288,9 +306,10 @@ function LiveStage({
             <span className={`hidden sm:flex items-center gap-1 bg-black/45 backdrop-blur text-xs px-2.5 py-1.5 rounded-full ${cat.accent}`}>
               <CatIcon className="h-3.5 w-3.5" />{cat.label}
             </span>
-            <span className="flex items-center gap-1 bg-black/45 backdrop-blur text-white text-xs px-2.5 py-1.5 rounded-full" data-testid="live-viewers">
+            <button onClick={() => setShowViewers(true)} data-testid="live-viewers"
+              className="flex items-center gap-1 bg-black/45 backdrop-blur text-white text-xs px-2.5 py-1.5 rounded-full active:scale-95 transition">
               <Users className="h-3.5 w-3.5" />{liveCount}
-            </span>
+            </button>
             <button onClick={isHost ? endLive : onClose} data-testid="live-close"
               className="ml-auto h-9 w-9 grid place-items-center rounded-full bg-black/45 backdrop-blur text-white">
               <X className="h-5 w-5" />
@@ -300,6 +319,45 @@ function LiveStage({
         </div>
 
         <FloatingHearts hearts={hearts} />
+
+        {/* Viewer list sheet */}
+        {showViewers && (
+          <div className="absolute inset-0 z-40 flex flex-col justify-end" data-testid="live-viewers-panel"
+            onClick={() => setShowViewers(false)}>
+            <div className="absolute inset-0 bg-black/50" />
+            <div className="relative bg-zinc-900 rounded-t-2xl max-h-[62%] flex flex-col pb-[calc(1rem+env(safe-area-inset-bottom))]"
+              onClick={e => e.stopPropagation()}>
+              <div className="flex items-center gap-2 px-4 pt-4 pb-3 border-b border-white/10">
+                <Users className="h-4 w-4 text-white/70" />
+                <span className="text-white font-semibold text-sm">{viewerList.length} watching</span>
+                <button onClick={() => setShowViewers(false)} data-testid="live-viewers-close"
+                  className="ml-auto h-8 w-8 grid place-items-center rounded-full bg-white/10 text-white"><X className="h-4 w-4" /></button>
+              </div>
+              <div className="overflow-y-auto px-2 py-2">
+                {viewerList.length === 0 ? (
+                  <div className="text-white/50 text-sm text-center py-10">No one is watching yet.</div>
+                ) : viewerList.map(p => {
+                  const nm = (p.name || p.identity || '').replace(/^#/, '')
+                  return (
+                    <div key={p.identity} className="flex items-center gap-3 px-2 py-2 rounded-xl hover:bg-white/5">
+                      <button onClick={() => openProfile({ name: p.name, identity: p.identity })} data-testid="live-viewer-open"
+                        className="flex items-center gap-3 flex-1 min-w-0 text-left active:opacity-70">
+                        <Avatar id={p.identity} name={nm} size={36} />
+                        <span className="text-white text-sm font-medium truncate">{p.name || nm}</span>
+                      </button>
+                      {isHost && (
+                        <button onClick={() => greet({ name: p.name, identity: p.identity })} data-testid="live-greet"
+                          className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full bg-brand text-white active:scale-95 transition">
+                          <Hand className="h-3.5 w-3.5" /> Greet
+                        </button>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Chat feed — MOBILE overlay only */}
         <div className="md:hidden absolute left-0 right-16 bottom-24 z-20 max-h-[42%] overflow-y-auto no-scrollbar px-3 space-y-1.5"
@@ -320,7 +378,8 @@ function LiveStage({
         </div>
 
         {/* Bottom controls (host both platforms; viewer MOBILE only) */}
-        <div className="absolute bottom-0 inset-x-0 z-30 pb-[calc(0.9rem+env(safe-area-inset-bottom))] px-3">
+        <div className="absolute bottom-0 inset-x-0 z-30 pb-[calc(1.25rem+env(safe-area-inset-bottom))] px-3"
+          style={{ transform: kbOffset ? `translateY(-${kbOffset}px)` : undefined, transition: 'transform .18s ease' }}>
           {ended && !isHost ? (
             <button onClick={onClose} data-testid="live-ended-close"
               className="w-full py-3 rounded-xl bg-white/15 text-white font-semibold md:max-w-xs md:mx-auto md:block">This live has ended · Close</button>
@@ -350,6 +409,10 @@ function LiveStage({
                   className="flex-1 bg-transparent outline-none text-white placeholder:text-white/50 text-sm min-w-0" />
                 <button onClick={sendChat} data-testid="live-chat-send" className="text-white/90 shrink-0"><Send className="h-5 w-5" /></button>
               </div>
+              <button onClick={() => { sendWave(); showToast('You waved at the host 👋', 'success') }} data-testid="live-wave"
+                className="h-11 w-11 rounded-full grid place-items-center bg-amber-400/20 text-amber-300 shrink-0">
+                <Hand className="h-5 w-5" />
+              </button>
               <button onClick={sendHeart} data-testid="live-heart"
                 className="h-11 w-11 rounded-full grid place-items-center bg-rose-500/25 text-rose-300 shrink-0">
                 <Heart className="h-5 w-5" />
@@ -382,10 +445,18 @@ function LiveStage({
                   className="flex-1 bg-transparent outline-none text-white placeholder:text-white/40 text-sm min-w-0" />
                 <button onClick={sendChat} data-testid="live-chat-send-desktop" className="text-brand shrink-0"><Send className="h-5 w-5" /></button>
               </div>
-              <button onClick={sendHeart} data-testid="live-heart-desktop"
-                className="h-10 w-10 rounded-full grid place-items-center bg-rose-500/20 text-rose-300 shrink-0 hover:bg-rose-500/30 transition">
-                <Heart className="h-5 w-5" />
-              </button>
+              {!isHost && (
+                <>
+                  <button onClick={() => { sendWave(); showToast('You waved 👋', 'success') }} data-testid="live-wave-desktop"
+                    className="h-10 w-10 rounded-full grid place-items-center bg-amber-400/15 text-amber-300 shrink-0 hover:bg-amber-400/25 transition">
+                    <Hand className="h-5 w-5" />
+                  </button>
+                  <button onClick={sendHeart} data-testid="live-heart-desktop"
+                    className="h-10 w-10 rounded-full grid place-items-center bg-rose-500/20 text-rose-300 shrink-0 hover:bg-rose-500/30 transition">
+                    <Heart className="h-5 w-5" />
+                  </button>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -398,8 +469,8 @@ function LiveStage({
 // Outer modal: setup (host only) -> connect (LiveKit) -> stage.
 // ---------------------------------------------------------------------------
 export default function LiveModal({
-  mode, liveId, onClose, kind = 'stream',
-}: { mode: 'host' | 'viewer'; liveId?: string; onClose: () => void; kind?: 'story' | 'stream' }) {
+  mode, liveId, onClose,
+}: { mode: 'host' | 'viewer'; liveId?: string; onClose: () => void }) {
   const [phase, setPhase] = useState<'setup' | 'connecting' | 'live'>(mode === 'host' ? 'setup' : 'connecting')
   const [audience, setAudience] = useState<Audience>('public')
   const [category, setCategory] = useState('just_chatting')
@@ -420,7 +491,7 @@ export default function LiveModal({
     try {
       const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: true })
       s.getTracks().forEach(t => t.stop())
-      const r = await api.liveStart({ audience, category: kind === 'story' ? undefined : category, save, title: title.trim(), group_id: groupId || undefined, kind })
+      const r = await api.liveStart({ audience, category, save, title: title.trim(), group_id: groupId || undefined })
       setCreds({ ...r, is_host: true, host: undefined, title: title.trim(), category, audience })
       setPhase('live')
     } catch (e: any) {
@@ -444,7 +515,6 @@ export default function LiveModal({
   }, [liveId])
 
   useEffect(() => { if (mode === 'viewer' && liveId) joinViewer() }, [mode, liveId, joinViewer])
-  useWatchHeartbeat(liveId, mode === 'viewer' && phase === 'live')
 
   const AUD: { key: Audience; icon: any; label: string; hint: string }[] = [
     { key: 'public', icon: Globe2, label: 'Public', hint: 'Anyone on Skali' },
@@ -459,7 +529,7 @@ export default function LiveModal({
         <div className="h-full flex flex-col overflow-y-auto">
           <div className="w-full max-w-xl mx-auto p-5 pt-[calc(1.25rem+env(safe-area-inset-top))] pb-[calc(3rem+env(safe-area-inset-bottom))]">
             <div className="flex items-center gap-2 mb-6">
-              <span data-testid="live-setup-kind" className="neon-live flex items-center gap-1.5 bg-rose-600 text-white text-xs font-bold px-2 py-1 rounded-md"><Radio className="h-3.5 w-3.5" />{kind === 'story' ? 'LIVE STORY' : 'CONTENT STREAMING'}</span>
+              <span className="flex items-center gap-1.5 bg-rose-600 text-white text-xs font-bold px-2 py-1 rounded-md"><Radio className="h-3.5 w-3.5" />GO LIVE</span>
               <button onClick={onClose} data-testid="live-setup-close" className="ml-auto h-9 w-9 grid place-items-center rounded-full bg-white/10 text-white"><X className="h-5 w-5" /></button>
             </div>
 
@@ -468,24 +538,20 @@ export default function LiveModal({
               placeholder="What's happening?" data-testid="live-title-input"
               className="w-full bg-panel border border-edge rounded-xl px-4 py-3 outline-none focus:border-brand text-white mb-5" />
 
-            {kind !== 'story' && (
-              <>
-                <div className="text-xs uppercase tracking-wide text-slate-400 mb-2">Category</div>
-                <div className="grid grid-cols-3 gap-2 mb-5">
-                  {LIVE_CATEGORIES.map(c => {
-                    const Icon = c.icon
-                    const on = category === c.key
-                    return (
-                      <button key={c.key} onClick={() => setCategory(c.key)} data-testid={`live-cat-pick-${c.key}`}
-                        className={`rounded-xl border p-3 flex flex-col items-center gap-1.5 transition ${on ? 'border-brand bg-brand/10' : 'border-edge bg-panel hover:border-brand/40'}`}>
-                        <Icon className={`h-5 w-5 ${on ? 'text-brand' : c.accent}`} />
-                        <span className={`text-xs font-semibold ${on ? 'text-white' : 'text-slate-300'}`}>{c.label}</span>
-                      </button>
-                    )
-                  })}
-                </div>
-              </>
-            )}
+            <div className="text-xs uppercase tracking-wide text-slate-400 mb-2">Category</div>
+            <div className="grid grid-cols-3 gap-2 mb-5">
+              {LIVE_CATEGORIES.map(c => {
+                const Icon = c.icon
+                const on = category === c.key
+                return (
+                  <button key={c.key} onClick={() => setCategory(c.key)} data-testid={`live-cat-pick-${c.key}`}
+                    className={`rounded-xl border p-3 flex flex-col items-center gap-1.5 transition ${on ? 'border-brand bg-brand/10' : 'border-edge bg-panel hover:border-brand/40'}`}>
+                    <Icon className={`h-5 w-5 ${on ? 'text-brand' : c.accent}`} />
+                    <span className={`text-xs font-semibold ${on ? 'text-white' : 'text-slate-300'}`}>{c.label}</span>
+                  </button>
+                )
+              })}
+            </div>
 
             <div className="text-xs uppercase tracking-wide text-slate-400 mb-2">Who can watch</div>
             <div className="grid grid-cols-2 gap-2 mb-4">

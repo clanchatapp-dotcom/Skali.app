@@ -5,7 +5,7 @@ import { Avatar, timeAgo } from '../lib/ui'
 import RoleBadge from '../components/RoleBadge'
 import AdultBadge from '../components/AdultBadge'
 import AccountBadge from '../components/AccountBadge'
-import { Heart, UserPlus, Lock, Check, Tag, X, Trash2, Radio, ArrowLeft } from 'lucide-react'
+import { Heart, UserPlus, Lock, Check, Tag, X, Trash2, Radio } from 'lucide-react'
 
 const ICON: any = { like: Heart, follow: UserPlus, follow_request: UserPlus, follow_accepted: Check, inner_invite: Lock, inner_accepted: Lock, tag_request: Tag, live: Radio }
 
@@ -31,10 +31,7 @@ export default function Activity() {
   return (
     <div>
       <div className="sticky top-0 z-30 bg-ink/80 backdrop-blur border-b border-edge px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))] flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Link to="/messages" data-testid="activity-back" aria-label="Back to Messages" className="h-8 w-8 grid place-items-center rounded-lg text-slate-300 hover:text-white hover:bg-white/5"><ArrowLeft className="h-5 w-5" /></Link>
-          <h1 className="text-xl font-extrabold">Activity</h1>
-        </div>
+        <h1 className="text-xl font-extrabold">Activity</h1>
         {items.length > 0 && (
           <button onClick={clearAll} className="flex items-center gap-1.5 text-sm text-slate-400 hover:text-rose-300 px-2 py-1 rounded-lg hover:bg-white/5">
             <Trash2 className="h-4 w-4" /> Clear all

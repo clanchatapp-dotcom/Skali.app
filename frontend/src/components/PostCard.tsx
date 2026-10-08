@@ -1,13 +1,15 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Trash2, Flag, MessageCircle, Send, CornerDownRight, SmilePlus, Sparkles, History, X, Pin, Play } from 'lucide-react'
+import { Trash2, Flag, MessageCircle, Send, CornerDownRight, SmilePlus, Sparkles, History, X, Pin, Play, Download, Check, Loader2 } from 'lucide-react'
 import { api } from '../lib/api'
-import { Avatar, TIER, TierKey, timeAgo, Linkify } from '../lib/ui'
+import { Avatar, ZoomAvatar, TIER, TierKey, timeAgo, Linkify } from '../lib/ui'
+import { saveMedia } from '../lib/saveMedia'
+import { showToast } from '../lib/toast'
+import { recordSaved } from '../lib/savedMedia'
 import RoleBadge from './RoleBadge'
 import AdultBadge from './AdultBadge'
 import AccountBadge from './AccountBadge'
 import MediaLightbox from './MediaLightbox'
-import AvatarMenu from './AvatarMenu'
 
 const REPORT_CATS = ['harassment', 'hate', 'self_harm', 'inappropriate', 'unlabelled_ai', 'impersonation', 'underage', 'spam', 'csam', 'other']
 const RX: Record<string, string> = { like: '👍', love: '❤️', haha: '😂', wow: '😮', sad: '😢', angry: '😡' }
@@ -54,6 +56,22 @@ export default function PostCard({ post, onDelete }: { post: any; onDelete?: (id
     : (post.media_url ? [{ url: post.media_url, type: post.media_type || 'image' }] : [])
   const visuals = mediaItems.filter(m => m.type !== 'audio')
   const audios = mediaItems.filter(m => m.type === 'audio')
+  // Inner Circle posts can't be saved for now; everything else can.
+  const canSave = post.tier !== 'inner'
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'done'>('idle')
+  const saveMediaAt = async (i: number) => {
+    const m = visuals[i]
+    if (!m || saveState === 'saving') return
+    setSaveState('saving')
+    try {
+      const r = await saveMedia(m.url)
+      setSaveState('done'); setTimeout(() => setSaveState('idle'), 1800)
+      recordSaved(m.url, m.type)
+      showToast(r === 'saved' ? 'Saved to your device' : 'Opened — long-press to save', r === 'saved' ? 'success' : 'info')
+    } catch {
+      setSaveState('idle'); showToast('Could not save this media', 'error')
+    }
+  }
 
   const react = async (emoji: string) => {
     setPick(false)
@@ -85,7 +103,7 @@ export default function PostCard({ post, onDelete }: { post: any; onDelete?: (id
   return (
     <article className="bg-panel border border-edge rounded-2xl p-4 animate-pop">
       <div className="flex items-start gap-3">
-        <AvatarMenu user={a} testId={`post-avatar-${post.id}`} />
+        <Link to={`/u/${a.handle}`}><Avatar id={a.id} name={a.display_name} url={a.avatar_url} /></Link>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <Link to={`/u/${a.handle}`} className="font-semibold hover:underline">{a.display_name}</Link>
@@ -170,6 +188,17 @@ export default function PostCard({ post, onDelete }: { post: any; onDelete?: (id
                 </span>
               )}
 
+              {canSave && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); saveMediaAt(activeIdx) }}
+                  data-testid="post-media-save"
+                  aria-label="Save to device"
+                  className="absolute bottom-2 right-2 z-10 h-9 w-9 grid place-items-center rounded-full bg-black/60 text-white backdrop-blur hover:bg-black/80 transition"
+                >
+                  {saveState === 'saving' ? <Loader2 className="h-4 w-4 animate-spin" /> : saveState === 'done' ? <Check className="h-5 w-5 text-emerald-400" /> : <Download className="h-5 w-5" />}
+                </button>
+              )}
+
               {visuals.length > 1 && (
                 <>
                   <span className="absolute top-2 right-2 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-black/60 text-white">{activeIdx + 1}/{visuals.length}</span>
@@ -188,7 +217,7 @@ export default function PostCard({ post, onDelete }: { post: any; onDelete?: (id
           ))}
 
           {lightbox && visuals.length > 0 && (
-            <MediaLightbox items={visuals} index={lbIndex} onClose={() => setLightbox(false)} />
+            <MediaLightbox items={visuals} index={lbIndex} allowSave={canSave} onClose={() => setLightbox(false)} />
           )}
           {post.tags?.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
@@ -313,7 +342,7 @@ function Comment({ c, onReply, onDelete }: { c: any; onReply?: () => void; onDel
   const a = c.author || { handle: 'unknown', display_name: 'Unknown' }
   return (
     <div className="flex gap-2">
-      <Link to={`/u/${a.handle}`}><Avatar id={a.id} name={a.display_name} url={a.avatar_url} size={30} /></Link>
+      <ZoomAvatar id={a.id} name={a.display_name} url={a.avatar_url} size={30} testID="comment-avatar" />
       <div className="flex-1 min-w-0">
         <div className="bg-ink border border-edge rounded-2xl px-3 py-2">
           <Link to={`/u/${a.handle}`} className="text-sm font-medium hover:underline">{a.display_name}</Link>

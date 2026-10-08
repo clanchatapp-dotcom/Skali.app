@@ -9,7 +9,9 @@ import DobPicker from './DobPicker'
 import {
   Home,
   Search,
+  Compass,
   MessageCircle,
+  Bell,
   User,
   LogOut,
   Sparkles,
@@ -19,9 +21,7 @@ import {
   Film,
   Users2,
   Users,
-  Plus,
-  Radio,
-  X
+  Radio
 } from 'lucide-react'
 import { useAuth } from '../lib/auth'
 import {
@@ -32,14 +32,12 @@ import {
 import { configurePush, CallAcceptBus } from '../lib/pushNotifications'
 import { Avatar } from '../lib/ui'
 import OnboardingTour from './OnboardingTour'
-import LiveAlertBanner from './LiveAlertBanner'
 import CallModal from './CallModal'
 import IncomingCallScreen, {
   IncomingCall
 } from './IncomingCallScreen'
 import RoleBadge from './RoleBadge'
 import AccountBadge from './AccountBadge'
-import LiveModal from './LiveModal'
 
 const NAV = [
   {
@@ -54,9 +52,24 @@ const NAV = [
     label: 'Find'
   },
   {
+    to: '/live',
+    icon: Radio,
+    label: 'Live'
+  },
+  {
+    to: '/choices',
+    icon: Compass,
+    label: 'Choices'
+  },
+  {
     to: '/messages',
     icon: MessageCircle,
     label: 'Messages'
+  },
+  {
+    to: '/activity',
+    icon: Bell,
+    label: 'Activity'
   }
 ]
 
@@ -67,17 +80,6 @@ export default function Layout() {
 
   const [trending, setTrending] =
     useState<any[]>([])
-
-  const [liveAlert, setLiveAlert] = useState<any>(null)
-  const [createOpen, setCreateOpen] = useState(false)
-  const [liveStory, setLiveStory] = useState(false)
-
-  const openComposer = () => {
-    setCreateOpen(false)
-    sessionStorage.setItem('skali:compose', '1')
-    if (location.pathname !== '/') nav('/')
-    else window.dispatchEvent(new Event('skali:compose'))
-  }
 
   const [unread, setUnread] =
     useState(0)
@@ -91,13 +93,11 @@ export default function Layout() {
   const [dobErr, setDobErr] =
     useState('')
 
-  // The Skali Team support account is an organisation account: no DOB gate or onboarding.
-  const isSupportBot = !!(user as any)?.is_support_bot
   const needsDob =
-    !isSupportBot && (user as any)?.dob_set === false
+    (user as any)?.dob_set === false
 
   const needsOnboarding =
-    !isSupportBot && !needsDob &&
+    !needsDob &&
     (user as any)?.onboarded === false
 
   const saveDob = async () => {
@@ -227,8 +227,6 @@ export default function Layout() {
 
               return cur
             })
-          } else if (m.type === 'live_started' && m.live) {
-            setLiveAlert(m.live)
           } else if (
             m.type ===
             'call_cancelled'
@@ -335,13 +333,12 @@ export default function Layout() {
   ) =>
     `flex items-center gap-3 px-3 py-2.5 rounded-xl font-medium transition ${
       active
-        ? 'synth-nav-active text-white border border-brand/30'
+        ? 'bg-brand/15 text-white border border-brand/30'
         : 'text-slate-400 hover:text-white hover:bg-white/5 border border-transparent'
     }`
 
   return (
     <div className="min-h-full w-full max-w-7xl mx-auto flex overflow-x-hidden">
-      {liveAlert && <LiveAlertBanner live={liveAlert} onClose={() => setLiveAlert(null)} />}
 
       {/* Desktop sidebar */}
 
@@ -434,7 +431,7 @@ export default function Layout() {
         </NavLink>
 
         {(user?.is_admin ||
-          user?.can_moderate || (user as any)?.is_support_bot) && (
+          user?.can_moderate) && (
           <NavLink
             to="/admin"
             className={({ isActive }) =>
@@ -442,13 +439,14 @@ export default function Layout() {
             }
           >
             <Shield className="h-5 w-5" />
-            {(user as any)?.is_support_bot && !user?.is_admin && !user?.can_moderate ? 'Support inbox' : 'Admin'}
+            Admin
           </NavLink>
         )}
 
         <button
-          onClick={() => setCreateOpen(true)}
-          data-testid="sidebar-create-btn"
+          onClick={() =>
+            nav('/?compose=1')
+          }
           className="mt-3 flex items-center justify-center gap-2 bg-gradient-to-r from-brand to-violet-600 rounded-xl py-3 font-semibold hover:opacity-95"
         >
           <PenSquare className="h-4 w-4" />
@@ -549,29 +547,17 @@ export default function Layout() {
 
       {/* Mobile bottom nav */}
 
-      <nav data-testid="bottom-nav" className="md:hidden fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+0.5rem)] z-40 glass border border-white/10 rounded-[26px] shadow-[0_10px_40px_-10px_rgba(0,0,0,.8)] flex items-center justify-around px-1.5 py-1.5">
+      <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-panel border-t border-edge flex items-stretch justify-around pt-2 pb-[calc(env(safe-area-inset-bottom)+0.6rem)]">
 
-        {NAV.map((n, i) => (
-          <span key={n.to} className="contents">
-          {i === 2 && (
-            <button
-              type="button"
-              data-testid="bottom-nav-create"
-              aria-label="Create"
-              onClick={() => setCreateOpen(true)}
-              className="synth-create shrink-0 -mt-7 h-14 w-14 rounded-full grid place-items-center text-white"
-            >
-              <Plus className="h-7 w-7" />
-            </button>
-          )}
+        {NAV.map(n => (
           <NavLink
+            key={n.to}
             to={n.to}
             end={n.end as any}
-            data-testid={`bottom-nav-${n.label.toLowerCase()}`}
             className={({ isActive }) =>
-              `relative flex flex-1 flex-col items-center gap-0.5 text-[10px] font-semibold py-1.5 rounded-2xl transition-colors ${
+              `relative flex flex-col items-center gap-1 text-xs ${
                 isActive
-                  ? 'synth-nav-active text-white'
+                  ? 'text-brand'
                   : 'text-slate-400'
               }`
             }
@@ -589,16 +575,14 @@ export default function Layout() {
                 </span>
               )}
           </NavLink>
-          </span>
         ))}
 
         <NavLink
           to={`/u/${user?.handle}`}
-          data-testid="bottom-nav-me"
           className={({ isActive }) =>
-            `flex flex-1 flex-col items-center gap-0.5 text-[10px] font-semibold py-1.5 rounded-2xl transition-colors ${
+            `flex flex-col items-center gap-1 text-xs ${
               isActive
-                ? 'synth-nav-active text-white'
+                ? 'text-brand'
                 : 'text-slate-400'
             }`
           }
@@ -607,33 +591,6 @@ export default function Layout() {
           Me
         </NavLink>
       </nav>
-
-      {/* Centre + : Create post or start a Live Story */}
-
-      {createOpen && (
-        <div className="fixed inset-0 z-[75] bg-black/70 backdrop-blur grid place-items-end sm:place-items-center" onClick={() => setCreateOpen(false)} data-testid="create-sheet">
-          <div className="bg-panel border border-edge rounded-t-2xl sm:rounded-2xl w-full max-w-sm p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))]" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center px-4 pt-2 pb-1">
-              <span className="text-sm font-semibold text-slate-200">Create</span>
-              <button onClick={() => setCreateOpen(false)} aria-label="Close" data-testid="create-sheet-close" className="ml-auto h-8 w-8 grid place-items-center rounded-full text-slate-400 hover:bg-white/10"><X className="h-4 w-4" /></button>
-            </div>
-            <button onClick={openComposer} data-testid="create-sheet-post"
-              className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl hover:bg-white/5 text-left text-white">
-              <PenSquare className="h-5 w-5 text-brand" />
-              <span><span className="block font-medium">Create post</span><span className="block text-xs text-slate-500">Text, photos, voice, tags and audience</span></span>
-            </button>
-            <button onClick={() => { setCreateOpen(false); setLiveStory(true) }} data-testid="create-sheet-live-story"
-              className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl hover:bg-white/5 text-left text-white">
-              <Radio className="h-5 w-5 text-rose-400" />
-              <span><span className="block font-medium">Live Story</span><span className="block text-xs text-slate-500">Go live to your story ring</span></span>
-            </button>
-          </div>
-        </div>
-      )}
-
-      {liveStory && (
-        <LiveModal mode="host" kind="story" onClose={() => { setLiveStory(false); window.dispatchEvent(new Event('skali:live-changed')) }} />
-      )}
 
       {/* One-time DOB gate */}
 

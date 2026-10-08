@@ -1,22 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
-import ReplaysSection from '../components/ReplaysSection'
-import { Capacitor } from '@capacitor/core'
 import { api } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { Avatar } from '../lib/ui'
 import LiveModal from '../components/LiveModal'
-import ObsStudioPanel from '../components/stream/ObsStudioPanel'
-import StreamBoundary from '../components/stream/StreamBoundary'
 import { LIVE_CATEGORIES, categoryOf } from '../lib/liveCategories'
 import { Radio, Users, Loader2, Video, Clock, PlayCircle, Lock, Users2, Globe2 } from 'lucide-react'
 
 type Stream = {
   id: string; host: any; audience: string; category: string
-  title: string; viewers: number; peak_viewers: number; started_at: string; source?: string
+  title: string; viewers: number; peak_viewers: number; started_at: string
 }
-
-const isNative = (() => { try { return Capacitor.isNativePlatform() } catch { return false } })()
 
 const fmtDuration = (sec?: number | null) => {
   if (!sec || sec < 0) return ''
@@ -53,15 +46,13 @@ function StreamCard({ s, onOpen }: { s: Stream; onOpen: () => void }) {
   const CatIcon = cat.icon
   return (
     <button onClick={onOpen} data-testid={`live-card-${s.id}`}
-      className="group text-left rounded-2xl overflow-hidden bg-panel border border-edge hover:border-neon-pink/50 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_0_30px_-8px_rgb(var(--neon-pink)/.6)]">
-      <div className="relative aspect-video overflow-hidden bg-[radial-gradient(120%_90%_at_50%_110%,rgb(var(--neon-pink)/.35),transparent_60%),linear-gradient(160deg,rgb(var(--brand)/.35),#050507_70%)]">
-        {/* Night Drive light streaks */}
-        <span className="absolute inset-x-0 top-1/3 h-px bg-gradient-to-r from-transparent via-neon-pink/60 to-transparent" />
-        <span className="absolute inset-x-0 top-2/3 h-px bg-gradient-to-r from-transparent via-neon-cyan/40 to-transparent" />
+      className="group text-left rounded-2xl overflow-hidden bg-panel border border-edge hover:border-brand/50 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-brand/10">
+      {/* Thumbnail */}
+      <div className="relative aspect-video overflow-hidden bg-gradient-to-br from-brand/25 via-ink to-black">
         <div className="absolute inset-0 grid place-items-center">
           <Avatar id={s.host?.handle || s.id} name={s.host?.display_name} url={s.host?.avatar_url} size={84} />
         </div>
-        <span className="neon-live absolute top-2.5 left-2.5 flex items-center gap-1.5 bg-rose-600 text-white text-[11px] font-bold px-2 py-0.5 rounded-md shadow">
+        <span className="absolute top-2.5 left-2.5 flex items-center gap-1.5 bg-rose-600 text-white text-[11px] font-bold px-2 py-0.5 rounded-md shadow">
           <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" /> LIVE
         </span>
         <span className="absolute top-2.5 right-2.5 flex items-center gap-1 bg-black/60 backdrop-blur text-white text-[11px] font-semibold px-2 py-0.5 rounded-md">
@@ -71,6 +62,7 @@ function StreamCard({ s, onOpen }: { s: Stream; onOpen: () => void }) {
           <CatIcon className="h-3 w-3" />{cat.label}
         </span>
       </div>
+      {/* Meta */}
       <div className="flex gap-3 p-3">
         <Avatar id={s.host?.handle || s.id} name={s.host?.display_name} url={s.host?.avatar_url} size={38} />
         <div className="min-w-0 flex-1">
@@ -87,7 +79,6 @@ function StreamCard({ s, onOpen }: { s: Stream; onOpen: () => void }) {
 
 export default function Live() {
   const { user } = useAuth()
-  const nav = useNavigate()
   const [streams, setStreams] = useState<Stream[]>([])
   const [cats, setCats] = useState<any[]>([])
   const [active, setActive] = useState<string>('all')
@@ -96,17 +87,9 @@ export default function Live() {
   const [liveOpen, setLiveOpen] = useState<{ mode: 'host' | 'viewer'; liveId?: string } | null>(null)
 
   const myHandle = (user as any)?.handle
-  const [params, setParams] = useSearchParams()
-  const watchId = params.get('watch')
-  useEffect(() => {
-    // Opened from a live alert: jump straight into that stream.
-    if (!watchId) return
-    setLiveOpen({ mode: 'viewer', liveId: watchId })
-    setParams({}, { replace: true })
-  }, [watchId])
 
   const load = useCallback(() => {
-    api.liveList(active === 'all' ? undefined : active).then((r: any) => setStreams((r || []).filter((s: any) => s.kind !== 'story'))).catch(() => {}).finally(() => setLoading(false))
+    api.liveList(active === 'all' ? undefined : active).then((r: any) => setStreams(r || [])).catch(() => {}).finally(() => setLoading(false))
     api.liveCategories().then((r: any) => setCats(r || [])).catch(() => {})
   }, [active])
 
@@ -123,29 +106,27 @@ export default function Live() {
   const mine = streams.find(s => s.host?.handle === myHandle)
   const others = streams.filter(s => s.host?.handle !== myHandle)
 
-  const open = (s: Stream) => s.source === 'obs' ? nav(`/watch/${s.id}`) : setLiveOpen({ mode: 'viewer', liveId: s.id })
-  const goLive = () => mine ? open(mine) : setLiveOpen({ mode: 'host' })
-  const allowed = !!(user as any)?.can_go_live
-  // Streaming is website-only; the mobile app is for watching.
-  const canGoLive = allowed && !isNative
+  const goLive = () => setLiveOpen(mine ? { mode: 'viewer', liveId: mine.id } : { mode: 'host' })
 
   return (
     <div className="min-h-full">
+      {/* Header */}
       <div className="sticky top-0 z-20 bg-ink/85 backdrop-blur border-b border-edge px-4 md:px-6 pt-[calc(1rem+env(safe-area-inset-top))] pb-4">
         <div className="flex items-center gap-3">
           <div className="h-10 w-10 rounded-xl bg-rose-600/15 grid place-items-center">
             <Radio className="h-5 w-5 text-rose-400" />
           </div>
           <div className="flex-1 min-w-0">
-            <h1 className="text-xl font-extrabold tracking-tight" data-testid="live-page-title">Content Streaming</h1>
-            <p className="text-xs text-slate-400">Creator streams across Skali</p>
+            <h1 className="text-xl font-extrabold tracking-tight">Live</h1>
+            <p className="text-xs text-slate-400">Streaming now across Skali</p>
           </div>
-          {canGoLive && <button onClick={goLive} data-testid="live-page-golive"
+          <button onClick={goLive} data-testid="live-page-golive"
             className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-gradient-to-r from-rose-600 to-brand text-white font-bold text-sm active:scale-95 transition hover:brightness-110">
             <Video className="h-4 w-4" />{mine ? 'Your stream' : 'Go Live'}
-          </button>}
+          </button>
         </div>
 
+        {/* Category chips */}
         <div className="mt-4 flex gap-2 overflow-x-auto no-scrollbar -mx-1 px-1">
           <button onClick={() => setActive('all')} data-testid="live-cat-all"
             className={`shrink-0 flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-sm font-semibold border transition ${active === 'all' ? 'bg-brand text-white border-brand' : 'bg-panel text-slate-300 border-edge hover:border-brand/40'}`}>
@@ -166,25 +147,11 @@ export default function Live() {
       </div>
 
       <div className="p-4 md:p-6 space-y-8">
-        {!canGoLive && (
-          <div className="rounded-2xl border border-edge bg-panel p-4 flex items-start gap-3" data-testid="live-restricted-note">
-            <Lock className="h-5 w-5 text-slate-400 shrink-0 mt-0.5" />
-            <p className="text-sm text-slate-400">{allowed
-              ? 'Going live is only available on the Skali website. Open skaliapp.com in a browser to start streaming — you can watch every stream here.'
-              : 'Going live is currently limited to the Skali team and invited streamers. You can still watch every stream here.'}</p>
-          </div>
-        )}
-
-        {!isNative && canGoLive && (
-          <StreamBoundary label="OBS streaming">
-            <ObsStudioPanel />
-          </StreamBoundary>
-        )}
-
+        {/* You're live banner */}
         {mine && (
-          <button onClick={() => open(mine)} data-testid="live-mine-banner"
+          <button onClick={() => setLiveOpen({ mode: 'viewer', liveId: mine.id })} data-testid="live-mine-banner"
             className="w-full flex items-center gap-3 p-4 rounded-2xl bg-rose-600/10 border border-rose-600/40 text-left hover:bg-rose-600/15 transition">
-            <span className="neon-live flex items-center gap-1.5 bg-rose-600 text-white text-xs font-bold px-2 py-1 rounded-md"><Radio className="h-3.5 w-3.5" />LIVE</span>
+            <span className="flex items-center gap-1.5 bg-rose-600 text-white text-xs font-bold px-2 py-1 rounded-md"><Radio className="h-3.5 w-3.5" />LIVE</span>
             <div className="flex-1 min-w-0">
               <div className="font-semibold text-white truncate">You're live now</div>
               <div className="text-xs text-slate-400 truncate">{mine.viewers} watching · tap to open your stream</div>
@@ -192,6 +159,7 @@ export default function Live() {
           </button>
         )}
 
+        {/* Live Now grid */}
         <section>
           <div className="flex items-center gap-2 mb-3">
             <span className="h-2 w-2 rounded-full bg-rose-500 animate-pulse" />
@@ -207,23 +175,22 @@ export default function Live() {
                 <Video className="h-7 w-7 text-brand" />
               </div>
               <p className="text-slate-300 font-semibold">No one's live right now</p>
-              <p className="text-sm text-slate-500 mt-1">{canGoLive ? 'Be the first — start your stream and let your community join.' : 'Check back soon.'}</p>
-              {canGoLive && <button onClick={goLive} data-testid="live-empty-golive"
+              <p className="text-sm text-slate-500 mt-1">Be the first — start your stream and let your community join.</p>
+              <button onClick={goLive} data-testid="live-empty-golive"
                 className="mt-4 inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-gradient-to-r from-rose-600 to-brand text-white font-bold text-sm">
                 <Radio className="h-4 w-4" /> Go Live
-              </button>}
+              </button>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4" data-testid="live-grid">
               {others.map(s => (
-                <StreamCard key={s.id} s={s} onOpen={() => open(s)} />
+                <StreamCard key={s.id} s={s} onOpen={() => setLiveOpen({ mode: 'viewer', liveId: s.id })} />
               ))}
             </div>
           )}
         </section>
 
-        <ReplaysSection />
-
+        {/* Past streams (mine) */}
         {past.length > 0 && (
           <section>
             <div className="flex items-center gap-2 mb-3">

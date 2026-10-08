@@ -4,7 +4,7 @@ import { ArrowLeft, Compass, Megaphone, Loader2 } from 'lucide-react'
 import { api } from '../lib/api'
 import PostCard from '../components/PostCard'
 
-export default function Choices({ embedded = false }: { embedded?: boolean }) {
+export default function Choices() {
   const nav = useNavigate()
   const [data, setData] = useState<any>(null)
   const [busy, setBusy] = useState(false)
@@ -23,22 +23,17 @@ export default function Choices({ embedded = false }: { embedded?: boolean }) {
   }
 
   return (
-    <div className={embedded ? 'text-slate-100' : 'min-h-screen bg-ink text-slate-100'}>
-      {!embedded && <header className="sticky top-0 z-30 bg-ink/95 backdrop-blur border-b border-edge px-4 pt-[env(safe-area-inset-top)] min-h-14 flex items-center gap-3">
+    <div className="min-h-screen bg-ink text-slate-100">
+      <header className="sticky top-0 z-30 bg-ink/95 backdrop-blur border-b border-edge px-4 pt-[env(safe-area-inset-top)] min-h-14 flex items-center gap-3">
         <button onClick={() => nav(-1)} className="text-slate-300 hover:text-white py-3" data-testid="choices-back"><ArrowLeft className="h-5 w-5" /></button>
         <Compass className="h-5 w-5 text-brand" />
         <h1 className="text-lg font-bold flex-1">Choices</h1>
         {data?.opt_in && (
           <button onClick={toggle} disabled={busy} className="text-xs text-slate-400 hover:text-slate-200" data-testid="choices-toggle-off">Turn off</button>
         )}
-      </header>}
+      </header>
 
       <div className="max-w-2xl mx-auto px-4 py-5">
-        {embedded && data?.opt_in && (
-          <div className="flex justify-end mb-3">
-            <button onClick={toggle} disabled={busy} className="text-xs text-slate-400 hover:text-slate-200" data-testid="choices-toggle-off">Turn off Choices</button>
-          </div>
-        )}
         {!data ? (
           <div className="grid place-items-center py-20"><Loader2 className="animate-spin text-slate-500" /></div>
         ) : !data.opt_in ? (

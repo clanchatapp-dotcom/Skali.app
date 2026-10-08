@@ -208,51 +208,18 @@ export const api = {
 
   // Admin — Skali Team support inbox (restored)
   supportThreads: () => req('/admin/support/threads'),
-  supportUnread: () => req('/admin/support/unread'),
-  supportClaim: (handle: string, claim: boolean) =>
-    req(`/admin/support/claim/${handle}`, { method: 'POST', body: j({ claim }) }),
-  supportSolve: (handle: string, solved: boolean) =>
-    req(`/admin/support/solve/${handle}`, { method: 'POST', body: j({ solved }) }),
-  liveAlertedNow: () => req('/live/alerted-now'),
   supportThread: (handle: string) => req(`/admin/support/threads/${handle}`),
   supportReply: (handle: string, text: string) =>
     req(`/admin/support/reply/${handle}`, { method: 'POST', body: j({ text }) }),
 
   // Live streaming — Twitch-style public discovery + private tiers
-  liveStart: (b: { audience: string; category?: string; save: boolean; title?: string; group_id?: string; kind?: 'story' | 'stream' }) =>
+  liveStart: (b: { audience: string; category?: string; save: boolean; title?: string; group_id?: string }) =>
     req('/live/start', { method: 'POST', body: j(b) }),
-  streamers: (q?: string) => req(`/streamers${q ? `?q=${encodeURIComponent(q)}` : ''}`),
   liveList: (category?: string) => req(`/live${category ? `?category=${encodeURIComponent(category)}` : ''}`),
   liveCategories: () => req('/live/categories'),
   livePast: (handle: string) => req(`/live/past/${handle}`),
-
-  liveReplays: (handle?: string) => req(`/live/replays${handle ? `?handle=${encodeURIComponent(handle)}` : ''}`),
-
-  getLiveAlert: (handle: string) => req(`/live-alerts/${handle}`),
-
-  setLiveAlert: (handle: string, enabled: boolean) =>
-    req(`/live-alerts/${handle}`, { method: 'PUT', body: j({ enabled }) }),
   liveJoin: (id: string) => req(`/live/${id}/join`, { method: 'POST' }),
   liveEnd: (id: string) => req(`/live/${id}/end`, { method: 'POST' }),
-
-  // Phase 2 (web): OBS streaming via LiveKit Ingress, live-chat moderation, 24h VODs
-  streamIngress: () => req('/stream/ingress'),
-  streamCreateIngress: () => req('/stream/ingress', { method: 'POST' }),
-  streamResetIngress: () => req('/stream/ingress/reset', { method: 'POST' }),
-  streamStart: (b: { title?: string; category?: string; audience?: string }) =>
-    req('/stream/start', { method: 'POST', body: j(b) }),
-  streamEnd: () => req('/stream/end', { method: 'POST' }),
-  streamInfo: (id: string) => req(`/stream/${id}`),
-  streamJoin: (id: string) => req(`/stream/${id}/join`, { method: 'POST' }),
-  streamDeleteMsg: (id: string, msg_id: string) =>
-    req(`/stream/${id}/chat/delete`, { method: 'POST', body: j({ msg_id }) }),
-  streamTimeout: (id: string, user_id: string, minutes = 5) =>
-    req(`/stream/${id}/timeout`, { method: 'POST', body: j({ user_id, minutes }) }),
-  streamMods: () => req('/stream/mods'),
-  streamAddMod: (handle: string) => req('/stream/mods', { method: 'POST', body: j({ handle }) }),
-  streamRemoveMod: (handle: string) => req(`/stream/mods/${handle}`, { method: 'DELETE' }),
-  streamVods: () => req('/stream/vods'),
-  streamVodDownload: (id: string) => req(`/stream/vods/${id}/download`),
 
   // Verification
   verificationStatus: () => req('/verification/status'),
@@ -320,31 +287,6 @@ export const api = {
     }),
 
   creatorHealth: () => req('/creator/health'),
-
-  // Creator Studio > Analytics (real data + flagged sample data)
-  creatorAnalytics: (range = 'month') => req(`/creator/analytics?range=${range}`),
-
-  analyticsCsvUrl: (range = 'all') => `${API_BASE}/api/creator/analytics/export.csv?range=${range}`,
-
-  analyticsPdfUrl: (range = 'all') => `${API_BASE}/api/creator/analytics/export.pdf?range=${range}`,
-
-  createPromo: (b: { code: string; percent_off: number; label?: string; max_uses?: number | null; expires_on?: string | null }) =>
-    req('/creator/analytics/promos', { method: 'POST', body: j(b) }),
-
-  endPromo: (id: string) => req(`/creator/analytics/promos/${id}/end`, { method: 'POST' }),
-
-  dismissMilestone: (kind: string, value: number) =>
-    req('/creator/analytics/milestones/dismiss', { method: 'POST', body: j({ kind, value }) }),
-
-  watchHeartbeat: (liveId: string) => req(`/watch/${liveId}/heartbeat`, { method: 'POST' }),
-
-  adminStreamers: () => req('/admin/streamers'),
-
-  adminAssignStreamer: (handle: string) =>
-    req('/admin/streamers/assign', { method: 'POST', body: j({ handle }) }),
-
-  adminRemoveStreamer: (handle: string) =>
-    req('/admin/streamers/remove', { method: 'POST', body: j({ handle }) }),
 
   setHealthSettings: (b: {
     collection_enabled?: boolean

@@ -1,0 +1,31 @@
+{
+  "summary": "Full backend + UI verification of role-separated audit logs (super_admin / co_admin / moderator) with 24h access grants. All 17 pytest cases in /app/backend/tests/test_audit_separation.py pass against the LOCAL backend (localhost:8001). UI flow verified end-to-end on a local Vite dev server (http://localhost:3100 proxied to local backend): moderator sees three tabs with correct state markers, requests super_admin access -> '· pending', super_admin approves via data-testid audit-approve-<id>, moderator then sees '· 24h access' and loads entries (including the automatic 'audit_log_view' entry written to the super_admin log via the grant). Expiry forcing (past expires_at in db.audit_access) correctly makes GET /api/admin/audit?log=super_admin return 403 and overview outgoing[].status becomes 'expired'; granted no longer contains it. Non-staff user is 403'd on every /admin/audit* endpoint. Backfill condition verified: db.audit has 0 documents without log_role after startup.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_audit_separation.py",
+    "/app/test_reports/pytest/audit_separation.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py:3683 — audit_access_request short-circuits when an active grant exists by returning {'status':'approved'} but WITHOUT an id. The frontend does not depend on id in that branch today, but any future caller that stores the request id for polling will get undefined. Consider also returning the originating request id (or at least a synthetic id) for symmetry with the pending/dedup branch.",
+    "server.py:3666 — audit_access_overview computes 'expired' client-side for the response but does NOT persist status='expired' back to Mongo. A background sweeper or an on-read update_many would keep the collection self-describing and avoid repeating this computation in every consumer.",
+    "server.py:3629 _staff_with_role scans db.profiles with {'$or':[{role},{is_admin:true},{email:$in ADMIN_EMAILS}]} and then re-filters in Python via audit_log_of(p)==role. For medium-sized staff tables this is fine, but add a {role:1} index and/or move the role filter server-side to avoid pulling the entire admin set per request.",
+    "server.py:3109 audit() hard-defaults log_role via audit_log_of(admin). If a super_admin ever acts on behalf of (or impersonates) a co_admin flow, the write still lands in the super_admin log — which is correct for RBAC but worth a comment so future contributors don't 'fix' it.",
+    "AuditPanel.tsx:53 uses alert(e.message) and AuditPanel.tsx:60/63 same — these interrupt the admin UI and break Playwright/e2e unless dismissed. Prefer a toast or inline error (consistent with the rest of /admin)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_audit_separation.py (new)"
+  ],
+  "success_rate": {"backend": "100% (17/17)", "frontend": "100% (all assertions passed)"},
+  "test_credentials": "Local staff accounts (local Mongo db test_database): sa@test.skali / Test1234! (super_admin), co@test.skali / Test1234! (co_admin), mod@test.skali / Test1234! (moderator). Non-staff test user is auto-registered per run with reg_<rand>@test.skali / Test1234!.",
+  "seed_data_creation": "test_regular_user_blocked registers one throwaway non-staff account per run (prefix reg_). The _cleanup fixture deletes all db.audit_access rows for the three staff accounts before and after the module runs so re-runs are idempotent.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Preview URL frontend still points to Render prod which does NOT have these endpoints. For UI regression, start the local dev server with `cd /app && REACT_APP_BACKEND_URL= nohup npx vite --host 0.0.0.0 --port 3100 --strictPort &` (vite.config proxies /api to 127.0.0.1:8001) and use http://localhost:3100. Admin page triggers an onboarding modal on first login per account; dismiss by clicking Next until the final 'Enter Skali' button appears, then click it. The AuditPanel is reached by clicking the 'Audit log' tab (now visible to moderators too). Role-owner approve/deny lives in data-testid audit-incoming-requests with child buttons audit-approve-<id> / audit-deny-<id>. Expiry can be forced in Mongo: db.audit_access.update_one({'id':<rid>},{'$set':{'expires_at': <ISO in past>}}). The 'audit_log_view' write-back only fires on GET /api/admin/audit?log=<other> when a non-mine grant is active, so entries will accrue in the viewed log every time a grantee loads it.",
+  "rca of the issue": "N/A — no issues found. Feature works as spec'd: role scoping, 403 without grant, dedup pending, owner-only decide, 24h expiry sliding window via expires_at ISO comparison, backfill filled all legacy entries, and write-through audit of grant-based views."
+}

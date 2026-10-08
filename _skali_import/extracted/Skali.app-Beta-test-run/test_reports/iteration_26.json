@@ -1,0 +1,30 @@
+{
+  "summary": "Iteration 26 — Live Alerts + 24h Stream Replays end-to-end (backend + mobile 390x844 frontend). Backend pytest: 10/10 passing (GET/PUT /api/live-alerts/{handle} default/persist/404/auth, /api/live/replays listing, handle filter, unknown-handle empty, response shape with no _id, direct in-process _notify_live call confirming activity row is created when alerts are ON (and alerts_disabled_for returns the fan when OFF), watch_url helper for obs vs camera). Frontend: fan @ creator profile shows profile-live-alert-toggle ('Live alerts on'); click flips to 'Live alerts off' and persists after reload. /live shows replays-section with replay-card-obstest01 and replay-expiry-obstest01 reading '20h left'; clicking the card navigates to /watch/obstest01 where 'No recording is available' is rendered and vod-player is absent (expected — Supabase storage not configured in preview). /live?watch=obstest01 opens live-modal and strips the ?watch param from the URL. Mobile 390x844: no horizontal overflow on either /live or /u/creator.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_live_alerts_replays.py",
+    "/app/test_reports/pytest/iter26_live_alerts.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "live_alerts.replays(): fetches up to 60 VODs then does per-doc live_streams.find_one + _can_watch_live in a Python loop — fine today but will scale badly. Consider $lookup or batching with $in once catalog grows.",
+    "live_alerts.replays(): status filter is {'status':'ready'} on stream_vods and requires live_streams.status=='ended'. A VOD whose live doc was deleted will be silently skipped — correct behavior but worth logging to catch orphaned VODs.",
+    "server._notify_live(): import live_alerts _la happens inside a try/except at every call; cheap but repeated. Importing once at module scope would avoid the per-event try/import overhead and the broad except that currently masks real errors (only logged at warning level).",
+    "server._notify_live(): targets include a self-check (`if t == host: continue`) but Inner Circle/follower queries already exclude the host for normal data. Harmless, but the alerts_disabled_for subtraction is done AFTER the host filter — subtracting first would be a hair cheaper on big audiences.",
+    "LiveAlertBanner auto-dismisses after 10s via setTimeout on `[live, onClose]`; if two live_started events arrive <10s apart the second one resets the timer but reuses the DOM node — fine, but there's no queue so overlapping lives from different creators would clobber one another. Minor; probably acceptable.",
+    "ReplaysSection.tsx `hoursLeft` returns ceiled hours — a VOD <1 min from expiry still displays '1h left'. For UX fidelity consider showing '<1h' or minutes under the hour.",
+    "live_alerts module stores creator_id as the resolved profile id; it never cleans up prefs when a creator is deleted. Low priority but worth a cascade on account deletion."
+  ],
+  "updated_files": ["/app/backend/tests/test_live_alerts_replays.py"],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "100% (all acceptance checks pass)"},
+  "test_credentials": "creator@skali.test, fan@skali.test, owner@skali.test, mod@skali.test — password Test1234!",
+  "seed_data_creation": "Pre-existing seed obstest01 (live_streams.ended + stream_vods.ready, expires 2026-10-08) was used. Tests mutate db.live_alerts for fan+creator (restored to enabled=true after each run) and briefly add two activity rows for fan (TEST_notif_* ref ids, left in place — harmless).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run /app/backend/tests/test_live_alerts_replays.py with addopts disabled (python -m pytest -o addopts=\"\"), otherwise pytest-xdist from pytest.ini kicks in and the ADMIN_* / step-up fixtures in conftest.py don't collide but the module imports server directly for one test (TestNotifyLiveFilter) so parallel workers could race. Running serial is cheap (~3s). The obstest01 VOD will remain fresh for ~1 day — if it ages out, re-seed by setting stream_vods.obstest01.expires_at to now+24h. Live preview still has LiveKit disabled (/api/live/start → 500) and Supabase storage disabled (no playback_url), both expected and handled by the UI."
+}

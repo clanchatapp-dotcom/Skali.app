@@ -1,0 +1,22 @@
+{
+  "summary": "Frontend regression + Live feature verification on the canonical ROOT app (/app/src served via /app/index.html at the preview origin). All data-testids from the request are present and interactive. Backend endpoints re-confirmed via page.request: /api/auth/login (host+viewer) 200, /api/live/categories returns all 6 keys (gaming, just_chatting, music, creative, irl, sports), POST /api/live/start with public+music mints credentials and listing it is visible to non-follower, GET /api/live?category=music returns the stream, GET /api/live?category=gaming returns []. Flow executed: logged in as viewer via localStorage.cc_token, visited /live, saw live-page-golive + all 7 chips + live-card-<id> with LIVE/viewers/Music/Public tags. Clicking live-cat-music keeps the card; live-cat-gaming shows the 'No one\\'s live right now' empty state (live-empty-golive). Opening the card renders live-modal with live-badge, live-viewers, live-close, and the desktop Twitch-style sidebar (live-chat-input-desktop + live-chat-send-desktop). Clicking live-page-golive on a non-streaming account opens the setup modal with live-title-input, all 6 live-cat-pick-* buttons, all 4 live-aud-* options and live-start-btn; selecting live-aud-group reveals the 'You\\'re not in any groups yet.' message (viewer account has no groups). Regression: /, /search, /messages, /activity, /u/vickyviewer all return 200 and render content. Started test stream was cleaned up (POST /api/live/{id}/end).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_live_streaming_tiered.py"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "LiveModal.tsx is ~575 lines and mixes setup wizard, LiveKit room setup, host controls, viewer chat UI, recording, and both mobile+desktop layouts — splitting LiveStage / LiveSetup / useLiveRecording into separate modules would improve maintainability (non-blocking)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "streamer@test.com / test1234 (host, handle tomstreamer); viewer@test.com / test1234 (viewer, handle vickyviewer).",
+  "seed_data_creation": "Started a transient public Music stream as tomstreamer for discovery testing and ended it after the test (POST /api/live/{id}/end). Also cleaned a pre-existing stream from a prior run.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Root app at /app/src is live-serving via /app/index.html on https://clan-live.preview.emergentagent.com. The /app/frontend tree is stale and must be ignored. For Live tests, POST /api/live/start as streamer@test.com first to make a card appear on /live, and always POST /api/live/{id}/end as the host to clean up. Use page.request from Playwright (not urllib — the sandbox blocks urllib with 403). Inject viewer token via localStorage.setItem('cc_token', access_token) and navigate — SPA email login is flaky under headless.",
+  "rca_of_the_issue": "N/A — no bugs found; port from /app/frontend/src to /app/src is complete and working."
+}

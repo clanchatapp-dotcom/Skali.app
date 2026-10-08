@@ -1,0 +1,29 @@
+{
+  "summary": "Iteration 23 — Avatar chooser bug fix + Phase 2 VOD UI/API verified end-to-end. Backend pytest 5/5 passed (test_avatar_and_vod.py). UI: tap on data-testid=profile-story-avatar ALWAYS opens data-testid=avatar-chooser (React portal into document.body, z-index 88 > bottom-nav z 40) on both mobile 390x844 and desktop 1920. CASE A /u/tester2 as tester: both options enabled; avatar-view-story opens story-viewer; avatar-view-photo opens MediaLightbox (1 img). CASE B /u/skalitester (no photo, no story): both options present but disabled with hints 'No active story' and 'No photo yet'; avatar-chooser-cancel closes it; backdrop click also closes it. CASE C tester2 viewing own profile /u/tester2: chooser still opens; camera upload <label> badge coexists as a separate control. VOD UI: /live obs-studio-panel shows stream-vods with 'TEST_short_vod' + 'Ready' + 'Deletes in 23h' and 'TEST_vod2' + 'Recording failed'; obs-vod-disabled warning is NOT present (vod_enabled true). vod-download-bc5978cacdc8 triggers window.open(presigned URL); API returned 200 and URL is a Supabase S3 presigned (host ixahrtibbpjruggivjik.storage.supabase.co, X-Amz-Signature, response-content-disposition=attachment, path .../skali-vods/vods/<host>/bc5978cacdc8.mp4). vod-watch-bc5978cacdc8 navigates to /watch/bc5978cacdc8 which shows stream-offline-badge and <video data-testid=vod-player> with an http src. Backend direct GET to the presigned URL with Range: bytes=0-1023 returned 206 with Content-Type: video/mp4 and Content-Disposition: attachment. Cross-host (tester2) download → 404. Regression: bottom-nav has 5 items (bottom-nav-feed/find/messages/activity/me); feed tabs feed-tab-general/followers/interests; /u/skalitester shows creator-studio + creator-studio-live.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_avatar_and_vod.py",
+    "/app/test_reports/pytest/avatar_vod.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "StreamVods.tsx line 30: window.open(r.url, '_blank') is called AFTER an awaited fetch — some browsers (especially Safari/iOS) block popups because the gesture context is lost. Consider opening a blank window on click first, then assigning .location, or use a hidden <a target=_blank download href={url}>.click() pattern.",
+    "streaming.py download_vod: when exp exists but equal to now the branch evaluates to 410 (acceptable) but the message 'This recording is not available for download.' is identical for 409/410 — could differentiate 'expired' vs 'not ready yet' for clearer UX.",
+    "Stories.tsx ProfileStoryAvatar: tap handler onTap always opens chooser — matches the spec. Minor: the backdrop uses z-[88] which is correct (bottom-nav z-40). Portal into document.body avoids any transform/overflow stacking context issues from the Profile scroll container. Good."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_avatar_and_vod.py (new)"
+  ],
+  "success_rate": {"backend": "100% (5/5)", "frontend": "100% on all tested flows (chooser x6 scenarios + VOD UI + regression)"},
+  "test_credentials": "tester@skali.local / Tester123! (skalitester, host of VOD bc5978cacdc8, no photo/no story); tester2@skali.local / Tester123! (tester2, has avatar + active story).",
+  "seed_data_creation": "None. Tests are read-only against pre-seeded VOD bc5978cacdc8 and tester2's story. Backend sweeps are time-based and do not race within the pytest window.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Preview origin https://699f8874-5189-442a-9e2c-3a2f8dbf3a24.preview.emergentagent.com. Avatar chooser testids: profile-story-avatar, avatar-chooser (portal under document.body), avatar-view-story, avatar-view-photo, avatar-chooser-cancel. Chooser opens on every tap and renders disabled options with hint text when photo/story is missing — do not assume it closes if there's nothing to show. VOD testids: stream-vods, vod-download-<id>, vod-watch-<id>, vod-player, stream-offline-badge. VOD download URL is a Supabase S3 SigV4 presigned URL from host ixahrtibbpjruggivjik.storage.supabase.co with response-content-disposition=attachment; verify via API capture, NOT via Playwright popup.url (window.open happens after an awaited fetch so Chromium reports popup.url as ':' — intercept the /api/stream/vods/<id>/download response or hook window.open). Creator Studio buttons live on /u/<handle> (own profile), not /me (which is the Feed).",
+  "rca_of_the_issue": "User-reported bug 'tapping avatar never pulls up view picture / view story': confirmed fixed. The ProfileStoryAvatar component now unconditionally opens the chooser bottom-sheet on tap (previously it only opened the story viewer when has_active_story was true, so profiles without a story had no tappable action). The chooser is rendered via createPortal into document.body with z-[88] — above the mobile bottom-nav (z-40) and outside the Profile's scroll container, which also fixes the touch-pan-y overflow trap that could have swallowed clicks. Disabled options with helper text ('No active story' / 'No photo yet') make the behaviour discoverable even when neither resource exists."
+}

@@ -124,7 +124,6 @@ export default function Live() {
   const others = streams.filter(s => s.host?.handle !== myHandle)
 
   const open = (s: Stream) => s.source === 'obs' ? nav(`/watch/${s.id}`) : setLiveOpen({ mode: 'viewer', liveId: s.id })
-  const goLive = () => mine ? open(mine) : setLiveOpen({ mode: 'host' })
   const allowed = !!(user as any)?.can_go_live
   // Streaming is website-only; the mobile app is for watching.
   const canGoLive = allowed && !isNative
@@ -138,12 +137,8 @@ export default function Live() {
           </div>
           <div className="flex-1 min-w-0">
             <h1 className="text-xl font-extrabold tracking-tight" data-testid="live-page-title">Content Streaming</h1>
-            <p className="text-xs text-slate-400">Creator streams across Skali</p>
+            <p className="text-xs text-slate-400">Stream from OBS on the web · creator studio</p>
           </div>
-          {canGoLive && <button onClick={goLive} data-testid="live-page-golive"
-            className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-gradient-to-r from-rose-600 to-brand text-white font-bold text-sm active:scale-95 transition hover:brightness-110">
-            <Video className="h-4 w-4" />{mine ? 'Your stream' : 'Go Live'}
-          </button>}
         </div>
 
         <div className="mt-4 flex gap-2 overflow-x-auto no-scrollbar -mx-1 px-1">
@@ -207,11 +202,7 @@ export default function Live() {
                 <Video className="h-7 w-7 text-brand" />
               </div>
               <p className="text-slate-300 font-semibold">No one's live right now</p>
-              <p className="text-sm text-slate-500 mt-1">{canGoLive ? 'Be the first — start your stream and let your community join.' : 'Check back soon.'}</p>
-              {canGoLive && <button onClick={goLive} data-testid="live-empty-golive"
-                className="mt-4 inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-gradient-to-r from-rose-600 to-brand text-white font-bold text-sm">
-                <Radio className="h-4 w-4" /> Go Live
-              </button>}
+              <p className="text-sm text-slate-500 mt-1">{canGoLive ? 'Connect OBS above to start your stream and let your community join.' : 'Check back soon.'}</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4" data-testid="live-grid">

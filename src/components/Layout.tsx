@@ -40,6 +40,9 @@ import IncomingCallScreen, {
 import RoleBadge from './RoleBadge'
 import AccountBadge from './AccountBadge'
 import LiveModal from './LiveModal'
+import { Capacitor } from '@capacitor/core'
+
+const isNative = (() => { try { return Capacitor.isNativePlatform() } catch { return false } })()
 
 const NAV = [
   {
@@ -622,11 +625,13 @@ export default function Layout() {
               <PenSquare className="h-5 w-5 text-brand" />
               <span><span className="block font-medium">Create post</span><span className="block text-xs text-slate-500">Text, photos, voice, tags and audience</span></span>
             </button>
-            <button onClick={() => { setCreateOpen(false); setLiveStory(true) }} data-testid="create-sheet-live-story"
-              className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl hover:bg-white/5 text-left text-white">
-              <Radio className="h-5 w-5 text-rose-400" />
-              <span><span className="block font-medium">Live Story</span><span className="block text-xs text-slate-500">Go live to your story ring</span></span>
-            </button>
+            {isNative && (
+              <button onClick={() => { setCreateOpen(false); setLiveStory(true) }} data-testid="create-sheet-live-story"
+                className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl hover:bg-white/5 text-left text-white">
+                <Radio className="h-5 w-5 text-rose-400" />
+                <span><span className="block font-medium">Go Live</span><span className="block text-xs text-slate-500">Live to your story ring — like Insta Live</span></span>
+              </button>
+            )}
           </div>
         </div>
       )}

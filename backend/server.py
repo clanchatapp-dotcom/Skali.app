@@ -746,6 +746,12 @@ class DMSend(BaseModel):
     duration: Optional[float] = None
     view_once: Optional[bool] = False  # disappearing media: recipient may open it a single time
     allow_save: Optional[bool] = True   # if False, recipient can't save/download the media
+    silent: Optional[bool] = False      # silent DM: deliver normally but skip the push notification
+    scheduled_at: Optional[str] = None  # ISO datetime; if in the future, the DM is queued and delivered then
+
+class ScheduledDMEdit(BaseModel):
+    text: Optional[str] = None
+    scheduled_at: Optional[str] = None
 
 class TokenReq(BaseModel):
     room: str
@@ -2315,6 +2321,38 @@ async def dm_history(handle: str, u: dict = Depends(get_current_user)):
             'can_call': is_self or await inner_perm(other['id'], u['id'], 'call'),
             'messages': out}
 
+def _parse_dt_utc(s: str) -> datetime:
+    """Parse an ISO datetime string into a tz-aware UTC datetime."""
+    s = (s or '').strip().replace('Z', '+00:00')
+    dt = datetime.fromisoformat(s)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+async def _store_and_deliver_dm(sender: dict, other: dict, *, text: str, media_url, media_type,
+                                duration, view_once_flag: bool, allow_save_flag: bool, silent: bool) -> dict:
+    """Persist a DM, push it over the live WS, and (unless silent) fire a push notification.
+    Shared by the instant-send endpoint and the scheduled-DM worker."""
+    room = dm_room(sender['id'], other['id'])
+    created = datetime.now(timezone.utc).isoformat()
+    doc = {'id': str(uuid.uuid4()), 'room': room, 'participants': [sender['id'], other['id']],
+           'sender_id': sender['id'], 'content_enc': enc(text),
+           'media_url': media_url, 'media_type': media_type, 'duration': duration,
+           'view_once': view_once_flag, 'view_once_viewed': False, 'allow_save': allow_save_flag,
+           'pinned': False, 'created_at': created}
+    await db.dms.insert_one(dict(doc))
+    wire_media = None if view_once_flag else media_url
+    msg = {'id': doc['id'], 'sender_id': sender['id'], 'text': text, 'media_url': wire_media,
+           'media_type': media_type, 'duration': duration,
+           'view_once': view_once_flag, 'view_once_viewed': False, 'allow_save': allow_save_flag, 'created_at': created}
+    await manager.broadcast(room, {'type': 'dm', 'message': msg})
+    if other['id'] != sender['id'] and not silent:
+        preview = '🎤 Voice message' if media_type == 'audio' else ('📷 Photo' if media_url else (text or '')[:100])
+        await push_to_user(other['id'], f"#{sender['handle']}", preview, {'url': f"/messages/{sender['handle']}"})
+    return msg
+
+
 @app.post('/api/dms/{handle}')
 async def dm_send(handle: str, body: DMSend, u: dict = Depends(get_current_user)):
     other = await db.profiles.find_one({'handle': handle})
@@ -2329,23 +2367,118 @@ async def dm_send(handle: str, body: DMSend, u: dict = Depends(get_current_user)
         raise HTTPException(400, 'Empty message')
     view_once = bool(body.view_once) and bool(body.media_url)  # only meaningful with media
     allow_save = bool(body.allow_save) and not view_once  # view-once media is never savable
-    room = dm_room(u['id'], other['id'])
-    doc = {'id': str(uuid.uuid4()), 'room': room, 'participants': [u['id'], other['id']],
-           'sender_id': u['id'], 'content_enc': enc(text),
-           'media_url': body.media_url, 'media_type': body.media_type, 'duration': body.duration,
-           'view_once': view_once, 'view_once_viewed': False, 'allow_save': allow_save,
-           'pinned': False, 'created_at': datetime.now(timezone.utc).isoformat()}
-    await db.dms.insert_one(dict(doc))
-    # In WS + response, disappearing media never carries the URL — the recipient fetches it once via /view.
-    wire_media = None if view_once else body.media_url
-    msg = {'id': doc['id'], 'sender_id': u['id'], 'text': text, 'media_url': wire_media,
-           'media_type': body.media_type, 'duration': body.duration,
-           'view_once': view_once, 'view_once_viewed': False, 'allow_save': allow_save, 'created_at': doc['created_at']}
-    await manager.broadcast(room, {'type': 'dm', 'message': msg})
-    if other['id'] != u['id']:
-        preview = '🎤 Voice message' if body.media_type == 'audio' else ('📷 Photo' if body.media_url else (text or '')[:100])
-        await push_to_user(other['id'], f"#{u['handle']}", preview, {'url': f"/messages/{u['handle']}"})
+    # Scheduled send: if a future time is given, queue it instead of delivering now.
+    if body.scheduled_at:
+        try:
+            when = _parse_dt_utc(body.scheduled_at)
+        except Exception:
+            raise HTTPException(400, 'Invalid scheduled time')
+        if when > datetime.now(timezone.utc) + timedelta(seconds=15):
+            sdoc = {'id': str(uuid.uuid4()), 'sender_id': u['id'], 'sender_handle': u['handle'],
+                    'recipient_id': other['id'], 'recipient_handle': other['handle'],
+                    'content_enc': enc(text), 'media_url': body.media_url, 'media_type': body.media_type,
+                    'duration': body.duration, 'view_once': view_once, 'allow_save': allow_save,
+                    'silent': bool(body.silent), 'deliver_at': when.isoformat(),
+                    'status': 'pending', 'created_at': datetime.now(timezone.utc).isoformat()}
+            await db.scheduled_dms.insert_one(dict(sdoc))
+            return {'scheduled': True, 'id': sdoc['id'], 'deliver_at': sdoc['deliver_at'],
+                    'text': text, 'recipient_handle': other['handle'],
+                    'media_type': body.media_type, 'silent': bool(body.silent)}
+        # time is essentially now (or past) — fall through and send immediately
+    msg = await _store_and_deliver_dm(
+        u, other, text=text, media_url=body.media_url, media_type=body.media_type,
+        duration=body.duration, view_once_flag=view_once, allow_save_flag=allow_save, silent=bool(body.silent))
     return {**msg, 'mine': True, 'pinned': False}
+
+
+@app.get('/api/scheduled-dms')
+async def list_scheduled_dms(handle: Optional[str] = None, u: dict = Depends(get_current_user)):
+    """Pending scheduled DMs the current user has queued (optionally filtered to one recipient handle)."""
+    q = {'sender_id': u['id'], 'status': 'pending'}
+    if handle:
+        q['recipient_handle'] = handle
+    out = []
+    async for s in db.scheduled_dms.find(q).sort('deliver_at', 1):
+        out.append({'id': s['id'], 'recipient_handle': s.get('recipient_handle'),
+                    'text': dec(s.get('content_enc', '')), 'media_type': s.get('media_type'),
+                    'media_url': s.get('media_url'), 'silent': bool(s.get('silent')),
+                    'deliver_at': s['deliver_at'], 'created_at': s.get('created_at')})
+    return out
+
+
+@app.patch('/api/scheduled-dms/{sid}')
+async def edit_scheduled_dm(sid: str, body: ScheduledDMEdit, u: dict = Depends(get_current_user)):
+    s = await db.scheduled_dms.find_one({'id': sid})
+    if not s or s['sender_id'] != u['id'] or s.get('status') != 'pending':
+        raise HTTPException(404, 'Scheduled message not found')
+    upd: dict = {}
+    if body.text is not None:
+        t = body.text.strip()
+        if not t and not s.get('media_url'):
+            raise HTTPException(400, 'Empty message')
+        upd['content_enc'] = enc(t)
+    if body.scheduled_at is not None:
+        try:
+            when = _parse_dt_utc(body.scheduled_at)
+        except Exception:
+            raise HTTPException(400, 'Invalid scheduled time')
+        if when <= datetime.now(timezone.utc) + timedelta(seconds=15):
+            raise HTTPException(400, 'Pick a time in the future')
+        upd['deliver_at'] = when.isoformat()
+    if upd:
+        await db.scheduled_dms.update_one({'id': sid}, {'$set': upd})
+    return {'ok': True}
+
+
+@app.delete('/api/scheduled-dms/{sid}')
+async def cancel_scheduled_dm(sid: str, u: dict = Depends(get_current_user)):
+    r = await db.scheduled_dms.update_one(
+        {'id': sid, 'sender_id': u['id'], 'status': 'pending'},
+        {'$set': {'status': 'canceled', 'canceled_at': datetime.now(timezone.utc).isoformat()}})
+    if not r.matched_count:
+        raise HTTPException(404, 'Scheduled message not found')
+    return {'ok': True}
+
+
+@app.on_event('startup')
+async def _start_scheduled_dm_worker():
+    asyncio.create_task(_scheduled_dm_worker())
+
+
+async def _scheduled_dm_worker():
+    """Every ~30s, deliver any scheduled DMs whose time has arrived (1:1 DMs only)."""
+    while True:
+        try:
+            now_iso = datetime.now(timezone.utc).isoformat()
+            due = [d async for d in db.scheduled_dms.find(
+                {'status': 'pending', 'deliver_at': {'$lte': now_iso}}).limit(50)]
+            for s in due:
+                claim = await db.scheduled_dms.update_one(
+                    {'id': s['id'], 'status': 'pending'}, {'$set': {'status': 'sending'}})
+                if not claim.modified_count:
+                    continue
+                try:
+                    sender = await db.profiles.find_one({'id': s['sender_id']})
+                    other = await db.profiles.find_one({'id': s['recipient_id']})
+                    if not sender or not other:
+                        await db.scheduled_dms.update_one({'id': s['id']}, {'$set': {'status': 'failed', 'error': 'user missing'}})
+                        continue
+                    if not await can_dm(sender['id'], other['id']):
+                        await db.scheduled_dms.update_one({'id': s['id']}, {'$set': {'status': 'skipped', 'error': 'dm no longer allowed'}})
+                        continue
+                    vo = bool(s.get('view_once')) and bool(s.get('media_url'))
+                    asave = bool(s.get('allow_save')) and not vo
+                    await _store_and_deliver_dm(
+                        sender, other, text=dec(s.get('content_enc', '')), media_url=s.get('media_url'),
+                        media_type=s.get('media_type'), duration=s.get('duration'),
+                        view_once_flag=vo, allow_save_flag=asave, silent=bool(s.get('silent')))
+                    await db.scheduled_dms.update_one({'id': s['id']}, {'$set': {'status': 'sent', 'sent_at': datetime.now(timezone.utc).isoformat()}})
+                except Exception as e:
+                    log.info(f'scheduled dm deliver failed {s.get("id")}: {e}')
+                    await db.scheduled_dms.update_one({'id': s['id']}, {'$set': {'status': 'failed', 'error': str(e)[:200]}})
+        except Exception as e:
+            log.info(f'scheduled dm worker loop error: {e}')
+        await asyncio.sleep(30)
 
 
 @app.post('/api/dms/{handle}/{message_id}/view')

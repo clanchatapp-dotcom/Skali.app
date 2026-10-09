@@ -34,7 +34,9 @@ import {
   Smile,
   Pencil,
   Plus,
-  Camera
+  Camera,
+  Clock,
+  BellOff
 } from 'lucide-react'
 
 export default function Messages() {
@@ -62,6 +64,14 @@ export default function Messages() {
   }, [jumpId, msgs])
 
   const [text, setText] = useState('')
+  const [sendMenu, setSendMenu] = useState(false)
+  const [schedOpen, setSchedOpen] = useState(false)
+  const [schedAt, setSchedAt] = useState('')
+  const [scheduled, setScheduled] = useState<any[]>([])
+  const [schedPanel, setSchedPanel] = useState(false)
+  const [editSched, setEditSched] = useState<any | null>(null)
+  const holdTimer = useRef<any>(null)
+  const heldRef = useRef(false)
   const [call, setCall] =
     useState<{
       room: string
@@ -225,21 +235,34 @@ export default function Messages() {
     })
   }, [msgs])
 
-  const send = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const toLocalInput = (ms: number) => {
+    const d = new Date(ms)
+    d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
+    return d.toISOString().slice(0, 16)
+  }
 
+  const loadScheduled = () => {
+    if (handle) api.scheduledDms(handle).then(setScheduled).catch(() => {})
+  }
+
+  useEffect(() => {
+    loadScheduled()
+    const t = setInterval(loadScheduled, 30000)
+    return () => clearInterval(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handle])
+
+  const doSend = async (opts?: { silent?: boolean; scheduled_at?: string }) => {
     const body = text.trim()
-
     if (!body || !handle) return
-
     setText('')
-
+    setSendMenu(false)
     try {
-      const m = await api.dmSend(
-        handle,
-        body
-      )
-
+      const m = await api.dmSend(handle, body, opts)
+      if (opts?.scheduled_at || m?.scheduled) {
+        loadScheduled()
+        return
+      }
       if (!seen.current.has(m.id)) {
         seen.current.add(m.id)
         setMsgs(p => [...p, m])
@@ -247,6 +270,67 @@ export default function Messages() {
     } catch (err: any) {
       alert(err.message)
       setText(body)
+    }
+  }
+
+  const send = (e: React.FormEvent) => {
+    e.preventDefault()
+    doSend()
+  }
+
+  const onSendPressStart = () => {
+    if (!text.trim()) return
+    heldRef.current = false
+    holdTimer.current = setTimeout(() => {
+      heldRef.current = true
+      setSendMenu(true)
+    }, 420)
+  }
+  const onSendPressEnd = () => {
+    if (holdTimer.current) {
+      clearTimeout(holdTimer.current)
+      holdTimer.current = null
+    }
+  }
+  const onSendClick = () => {
+    if (heldRef.current) {
+      heldRef.current = false
+      return
+    }
+    if (text.trim()) doSend()
+    else recording ? stopRec() : startRec()
+  }
+
+  const confirmSchedule = async () => {
+    if (!schedAt) return
+    const iso = new Date(schedAt).toISOString()
+    if (new Date(iso).getTime() <= Date.now() + 15000) {
+      alert('Pick a time at least a minute from now')
+      return
+    }
+    await doSend({ scheduled_at: iso })
+    setSchedOpen(false)
+    setSchedAt('')
+  }
+
+  const cancelScheduled = async (id: string) => {
+    try {
+      await api.cancelScheduledDm(id)
+      loadScheduled()
+    } catch (e: any) {
+      alert(e.message)
+    }
+  }
+  const saveEditScheduled = async () => {
+    if (!editSched) return
+    try {
+      const patch: any = { text: editSched.text }
+      if (editSched.deliver_local) patch.scheduled_at = new Date(editSched.deliver_local).toISOString()
+      await api.editScheduledDm(editSched.id, patch)
+      setEditSched(null)
+      loadScheduled()
+    } catch (e: any) {
+      alert(e.message)
     }
   }
 
@@ -2460,6 +2544,12 @@ export default function Messages() {
                         onPaste={
                           onComposerPaste
                         }
+                        onKeyDown={e => {
+                          if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault()
+                            doSend()
+                          }
+                        }}
                         placeholder={
                           recording
                             ? 'Recording…'
@@ -2519,19 +2609,31 @@ export default function Messages() {
                       </button>
                     </div>
 
+                    <div className="relative shrink-0">
+                    {sendMenu && (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setSendMenu(false)} data-testid="send-menu-backdrop" />
+                        <div className="absolute bottom-14 right-0 z-50 w-52 rounded-2xl border border-edge bg-panel shadow-xl overflow-hidden" data-testid="send-options-menu">
+                          <button type="button" onClick={() => doSend()} data-testid="send-now-btn" className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-slate-100 hover:bg-white/5">
+                            <Send className="h-4 w-4 text-brand" /> Send now
+                          </button>
+                          <button type="button" onClick={() => { setSendMenu(false); setSchedOpen(true) }} data-testid="send-schedule-btn" className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-slate-100 hover:bg-white/5 border-t border-edge">
+                            <Clock className="h-4 w-4 text-amber-400" /> Schedule…
+                          </button>
+                          <button type="button" onClick={() => doSend({ silent: true })} data-testid="send-silent-btn" className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-slate-100 hover:bg-white/5 border-t border-edge">
+                            <BellOff className="h-4 w-4 text-slate-400" /> Send silently
+                          </button>
+                        </div>
+                      </>
+                    )}
                     <button
-                      type={
-                        text.trim()
-                          ? 'submit'
-                          : 'button'
-                      }
-                      onClick={
-                        !text.trim()
-                          ? recording
-                            ? stopRec
-                            : startRec
-                          : undefined
-                      }
+                      type="button"
+                      onClick={onSendClick}
+                      onMouseDown={onSendPressStart}
+                      onMouseUp={onSendPressEnd}
+                      onMouseLeave={onSendPressEnd}
+                      onTouchStart={onSendPressStart}
+                      onTouchEnd={onSendPressEnd}
                       disabled={
                         busy ||
                         (!text.trim() &&
@@ -2563,7 +2665,70 @@ export default function Messages() {
                         <Mic className="h-5 w-5" />
                       )}
                     </button>
+                    </div>
                   </form>
+                  {scheduled.length > 0 && (
+                    <button type="button" onClick={() => setSchedPanel(true)} data-testid="scheduled-chip"
+                      className="fixed bottom-24 right-4 z-30 flex items-center gap-2 px-3 py-2 rounded-full bg-amber-500 text-black text-xs font-bold shadow-lg active:scale-95 transition">
+                      <Clock className="h-4 w-4" /> {scheduled.length} scheduled
+                    </button>
+                  )}
+                  {schedOpen && (
+                    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-4" onClick={() => setSchedOpen(false)}>
+                      <div className="w-full max-w-sm rounded-2xl border border-edge bg-panel p-5" onClick={e => e.stopPropagation()} data-testid="schedule-dialog">
+                        <div className="flex items-center gap-2 mb-3"><Clock className="h-5 w-5 text-amber-400" /><h3 className="font-bold text-white">Schedule message</h3></div>
+                        <p className="text-xs text-slate-400 mb-3 break-words line-clamp-3">"{text.trim()}"</p>
+                        <input type="datetime-local" value={schedAt} min={toLocalInput(Date.now() + 60000)}
+                          onChange={e => setSchedAt(e.target.value)} data-testid="schedule-datetime"
+                          className="w-full rounded-xl bg-black/30 border border-edge px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-brand" />
+                        <div className="flex gap-2 mt-4">
+                          <button type="button" onClick={() => setSchedOpen(false)} className="flex-1 py-2.5 rounded-xl border border-edge text-slate-300 text-sm font-semibold">Cancel</button>
+                          <button type="button" onClick={confirmSchedule} disabled={!schedAt} data-testid="schedule-confirm" className="flex-1 py-2.5 rounded-xl bg-brand text-white text-sm font-bold disabled:opacity-40">Schedule</button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {schedPanel && (
+                    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-4" onClick={() => setSchedPanel(false)}>
+                      <div className="w-full max-w-md rounded-2xl border border-edge bg-panel p-5 max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()} data-testid="scheduled-panel">
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-2"><Clock className="h-5 w-5 text-amber-400" /><h3 className="font-bold text-white">Scheduled messages</h3></div>
+                          <button type="button" onClick={() => setSchedPanel(false)} className="text-slate-400 hover:text-white"><X className="h-5 w-5" /></button>
+                        </div>
+                        {scheduled.length === 0 && <p className="text-sm text-slate-500 py-6 text-center">Nothing scheduled.</p>}
+                        <div className="space-y-2">
+                          {scheduled.map(s => (
+                            <div key={s.id} data-testid={`scheduled-item-${s.id}`} className="rounded-xl border border-edge bg-black/20 p-3">
+                              <p className="text-sm text-slate-100 break-words">{s.media_type ? `📎 ${s.media_type} ` : ''}{s.text}</p>
+                              <div className="flex items-center justify-between mt-2">
+                                <span className="text-[11px] text-amber-400 flex items-center gap-1">{s.silent && <BellOff className="h-3 w-3" />}<Clock className="h-3 w-3" /> {new Date(s.deliver_at).toLocaleString()}</span>
+                                <div className="flex gap-1">
+                                  <button type="button" onClick={() => setEditSched({ id: s.id, text: s.text, deliver_local: toLocalInput(new Date(s.deliver_at).getTime()) })} data-testid={`scheduled-edit-${s.id}`} className="h-8 w-8 grid place-items-center rounded-lg text-slate-300 hover:bg-white/10"><Pencil className="h-4 w-4" /></button>
+                                  <button type="button" onClick={() => cancelScheduled(s.id)} data-testid={`scheduled-cancel-${s.id}`} className="h-8 w-8 grid place-items-center rounded-lg text-rose-400 hover:bg-white/10"><Trash2 className="h-4 w-4" /></button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {editSched && (
+                    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/60 p-4" onClick={() => setEditSched(null)}>
+                      <div className="w-full max-w-sm rounded-2xl border border-edge bg-panel p-5" onClick={e => e.stopPropagation()} data-testid="scheduled-edit-dialog">
+                        <h3 className="font-bold text-white mb-3">Edit scheduled message</h3>
+                        <textarea value={editSched.text} onChange={e => setEditSched({ ...editSched, text: e.target.value })} data-testid="scheduled-edit-text"
+                          className="w-full rounded-xl bg-black/30 border border-edge px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-brand min-h-20" />
+                        <input type="datetime-local" value={editSched.deliver_local} min={toLocalInput(Date.now() + 60000)}
+                          onChange={e => setEditSched({ ...editSched, deliver_local: e.target.value })} data-testid="scheduled-edit-time"
+                          className="w-full rounded-xl bg-black/30 border border-edge px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-brand mt-2" />
+                        <div className="flex gap-2 mt-4">
+                          <button type="button" onClick={() => setEditSched(null)} className="flex-1 py-2.5 rounded-xl border border-edge text-slate-300 text-sm font-semibold">Cancel</button>
+                          <button type="button" onClick={saveEditScheduled} data-testid="scheduled-edit-save" className="flex-1 py-2.5 rounded-xl bg-brand text-white text-sm font-bold">Save</button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="p-4 border-t border-edge text-center text-sm text-slate-500">

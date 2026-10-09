@@ -707,11 +707,20 @@ export const api = {
   dmHistory: (h: string) =>
     req(`/dms/${h}`),
 
-  dmSend: (h: string, text: string) =>
+  dmSend: (h: string, text: string, opts?: { silent?: boolean; scheduled_at?: string }) =>
     req(`/dms/${h}`, {
       method: 'POST',
-      body: j({ text }),
+      body: j({ text, silent: opts?.silent, scheduled_at: opts?.scheduled_at }),
     }),
+
+  scheduledDms: (handle?: string) =>
+    req(`/scheduled-dms${handle ? `?handle=${encodeURIComponent(handle)}` : ''}`),
+
+  editScheduledDm: (id: string, patch: { text?: string; scheduled_at?: string }) =>
+    req(`/scheduled-dms/${id}`, { method: 'PATCH', body: j(patch) }),
+
+  cancelScheduledDm: (id: string) =>
+    req(`/scheduled-dms/${id}`, { method: 'DELETE' }),
 
   activity: () => req('/activity'),
 

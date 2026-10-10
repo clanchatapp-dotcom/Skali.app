@@ -1,0 +1,29 @@
+{
+  "summary": "Frontend-only verification of the Live Story setup OBS source picker. The picker renders correctly on hard page load (saved session) for owner, hides for author (no can_go_live), and /live regression works. However, right AFTER a fresh email/password login (no reload), the picker does NOT appear even for owner, because /api/auth/login returns a minimal user payload without can_go_live and AuthProvider.loginEmail sets that minimal object as the user state. canObs in LiveModal then evaluates to false until the next refresh()/reload.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "LiveModal setup (host, kind=story)", "issue": "After fresh email login the OBS/Camera source picker is NOT rendered (even for owner with can_go_live=true). Only shows after a hard reload. Root cause: AuthProvider.loginEmail sets user from /api/auth/login response which only returns {id, handle, display_name, email}; can_go_live is missing until /api/me is called via refresh().", "selector": "[data-testid=\"live-source-picker\"]", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "Email login -> go live from Feed story chooser", "issue": "User object missing can_go_live right after login causes canObs=false in LiveModal and /live canGoLive=false until refresh. Fix: call refresh() at end of loginEmail/registerEmail/loginDev OR have backend /api/auth/login include the full user profile fields (can_go_live, is_admin, etc.) so the UI uses a consistent user shape.", "affected_selectors": ["[data-testid=\"live-source-picker\"]", "[data-testid=\"live-source-obs\"]"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Fix AuthProvider.loginEmail (src/lib/auth.tsx) to call refresh() after setToken(), OR enrich /api/auth/login response with the full user profile including can_go_live. Without this, newly-logged-in website users still won't see the OBS picker on the Live Story setup — which is the exact user bug being fixed."
+  ],
+  "critical_code_review_comments": [
+    "src/lib/auth.tsx loginEmail/registerEmail/loginDev set user from the auth endpoint response which is a thin shape {id,name,email,avatar_url}. Any gating that depends on richer /api/me fields (can_go_live, is_admin, verified, etc.) will be wrong until a subsequent refresh. Call refresh() right after setToken to normalise.",
+    "LiveModal.tsx line 420 canObs = mode==='host' && !isNativeApp && !!user?.can_go_live is correct, but silently fails when user is the thin login payload. Consider also refetching /api/me when LiveModal opens in host mode (or using a selector that falls back to a separate 'me' hook)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a", "frontend": "75% (3/4 scenarios pass; fresh-login scenario fails for owner)"},
+  "test_credentials": "wallowner@test.com / Test1234 (can_go_live=true), wallauthor@test.com / Test1234 (can_go_live=false)",
+  "seed_data_creation": "none",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "After the loginEmail fix, re-run: login as wallowner (NO reload), open Feed -> add-story-plus -> story-chooser-live -> verify [data-testid=live-source-picker] + [data-testid=live-source-obs] appear; click OBS and verify [data-testid=live-obs-panel] shows and [data-testid=live-title-input] + [data-testid=live-start-btn] are hidden. Author (wallauthor) must still see camera-only form (no picker). /live owner still shows the ObsStudioPanel. Preview LiveKit is not configured so OBS panel shows 'Streaming server isn't configured yet (LiveKit keys missing on the backend).' — expected.",
+  "rca of the issue": "ROOT CAUSE: /api/auth/login response body.user is a 4-field object; AuthProvider stores it as-is on login, so user.can_go_live is undefined until the SPA remounts/refreshes and calls /api/me. REPRO: Clear storage -> /login -> enter wallowner creds -> Sign in -> click + on Your story -> Live Story -> picker is missing. MITIGATION: in src/lib/auth.tsx, after setToken(access_token); setUser(user) in loginEmail (and registerEmail/loginDev), call `await refresh()` to replace the thin user with the full /api/me payload. Alternative: have the backend /api/auth/login return the same shape as /api/me."
+}

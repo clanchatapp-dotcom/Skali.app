@@ -91,12 +91,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { access_token, user } = await withRetry(() => api.authLogin(email, password), onProgress)
     setToken(access_token)
     setUser(user)
+    api.me().then(setUser).catch(() => {})  // full profile (can_go_live, roles…)
   }
 
   const registerEmail = async (email: string, password: string, name: string, dob?: string, onProgress?: (n: number) => void) => {
     const { access_token, user } = await withRetry(() => api.authRegister(email, password, name, dob), onProgress)
     setToken(access_token)
     setUser(user)
+    api.me().then(setUser).catch(() => {})
   }
 
   const loginGoogle = async () => {

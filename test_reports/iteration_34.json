@@ -1,0 +1,20 @@
+{
+  "summary": "Retested iteration_33 issue: fresh email login followed by Feed -> add-story-plus -> story-chooser-live now correctly shows the live-source-picker with camera/OBS options for streamers (wallowner), and clicking live-source-obs shows the live-obs-panel. Non-streamer (wallauthor) correctly skips the picker and goes straight into the LiveModal without live-source-picker. Fix verified end-to-end on fresh login (no reload).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped)", "frontend": "100%"},
+  "test_credentials": "wallowner@test.com / Test1234 (streamer, sees picker). wallauthor@test.com / Test1234 (no picker).",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration_33 bug (missing live-source-picker right after fresh email login) is fixed. api.me() is being fetched after loginEmail so can_go_live is populated before LiveModal mounts. Verified both streamer (owner -> picker + camera/obs + obs-panel) and non-streamer (author -> no picker) flows on fresh login without page reload.",
+  "rca of the issue": "Login response did not include can_go_live; LiveModal mounted before user had updated capabilities, causing canObs=false and picker hidden. Fix in /app/src/lib/auth.tsx was to call api.me() right after loginEmail/registerEmail. Verified in this iteration."
+}

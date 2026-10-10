@@ -1,0 +1,28 @@
+{
+  "summary": "Frontend-only verification of Admin page Danger Zone visibility gating. Started local Vite on :3100 pointing to local backend via proxy, logged in with each of the three staff accounts, visited /admin, and asserted the presence/visibility of [data-testid=\"admin-danger-zone\"]. All three expectations met.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": {
+    "mod@test.skali": "PASS — admin-danger-zone NOT present in DOM (isFull=false). Audit tab clickable, shows 'Moderator (yours)' log entries.",
+    "sa@test.skali": "PASS — admin-danger-zone present and visible with Promote / Purge alice-bob-teen / Purge ALL demo buttons. Audit tab works (Super Admin log).",
+    "co@test.skali": "PASS — admin-danger-zone present and visible. Audit tab click intercepted by Welcome onboarding modal in this fresh session (not an admin-page bug; expected first-login UX). DOM check for danger-zone succeeded regardless."
+  },
+  "console_notes": "Only noise: Vite HMR websocket to ws://localhost:443 refused (expected under preview routing). No React/pageerror or app-level console.error observed on /admin for any user.",
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Admin.tsx is 767 lines — consider splitting the DangerZone section, AuditPanel, and the user/support tables into separate components for maintainability.",
+    "The isFull gate (line 675) correctly hides the entire <section> for moderators; markup is clean."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a", "frontend": "100%"},
+  "test_credentials": "sa@test.skali / co@test.skali / mod@test.skali — Test1234! (local Mongo only)",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Vite was started on :3100 for isolated local-backend testing and killed after. Preview URL still points to Render prod backend, so UI testing with local-only accounts must use `cd /app && REACT_APP_BACKEND_URL= nohup npx vite --host 0.0.0.0 --port 3100 --strictPort > /tmp/vite3100.log 2>&1 &`. For co@test.skali a Welcome onboarding modal appears on first session — dismiss (Next x4) before clicking admin tabs if needed."
+}

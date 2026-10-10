@@ -1,0 +1,17 @@
+{
+  "summary": "Verified deploy build fixes and backend bootstrap guard. Fix 1: `cd /app/frontend && yarn install && yarn build` exits 0 and produces /app/frontend/build/index.html + assets (index-DOKPBTrd.js ~1.45MB). Bundle contains Skali content including 'register-dob' testIds and 'clanchatapp-backend.onrender.com'. Simulated missing root node_modules by `mv /app/node_modules /tmp/root_nm_bak`, re-ran build in /app/frontend -> SUCCESS (symlink auto-created by build script); then restored /app/node_modules (verified as real directory, not symlink, 226 entries). Fix 2: Code review of backend/server.py _bootstrap (lines 897-923) confirms demo purge is now gated by `if os.environ.get('PURGE_DEMO_ON_STARTUP') != '1': raise RuntimeError('disabled')`. Backend GET http://localhost:8001/api/ returns 200 {ok:true,service:skali}. Preview https://birthday-picker-1.preview.emergentagent.com/login loads Skali login; clicking 'Sign in'/'Create one' reveals Day/Month/Year selects with data-testid register-dob-{day,month,year}-select all visible.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Main JS bundle is 1.45MB (380KB gzip) — consider manualChunks/code-splitting as Vite suggests.",
+    "/app/frontend/build/ still contains CRA-era public assets (ClanChat_*.pdf) copied from frontend/public — harmless but bloats deploy."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "none",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Build script lives in /app/frontend/package.json and chdir's to repo root to use Vite config at /app/vite.config.ts; it symlinks /app/node_modules -> frontend/node_modules if missing. Any future node_modules simulation MUST restore via `rm -f /app/node_modules && mv /tmp/root_nm_bak /app/node_modules` (rm -f handles symlink case)."
+}

@@ -1,0 +1,31 @@
+{
+  "summary": "Tested the review-request feature set end-to-end (backend + frontend, mobile 390x844). Backend: 30/30 pytest cases pass across go-live gating, owner-only streamer assignment, /api/me can_go_live flag, Analytics range picker (month|3m|all) with renamed overview fields (revenue/new_subs/tips/compare_label/milestone) and churn, promo codes CRUD + validation + checkout application + invalid-code 400, milestone surfacing + dismiss persistence, and watch-time heartbeat (viewer accumulates, host ignored, inner flag set). Frontend: every acceptance selector exists and behaves — Fan /live shows live-restricted-note and hides live-page-golive; Feed go-live-btn hidden for fan; Owner /admin Roles tab exposes streamers-panel with handle input + assign/remove flow; Moderator /live shows live-page-golive; Creator Analytics range picker switches ranges; milestone-card renders a kind message and the dismiss stays dismissed after reload; promo-new-btn opens the form; validation errors fire for short codes and out-of-range %; a created promo appears as promo-row-<CODE>; promo-end-<CODE> (confirm dialog) moves it to promos-ended; Fan profile has no creator-studio-live.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Fan profile", "issues": ["Non-creator sees a 'CREATOR STUDIO' heading above the lone 'Add to Story' button — matches spec but labelling it 'Creator Studio' for a fan is a minor UX oddity."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_golive_promos_milestones_watch.py",
+    "/app/test_reports/pytest/iter25_golive.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "creator_analytics.heartbeat: `now = _now()` is captured BEFORE the find_one; under contention the stored last_seen will slightly pre-date actual processing. Low impact (<HEARTBEAT_CAP) but worth capturing `now` AFTER the read.",
+    "creator_analytics._milestone computes `renewals = payments - unique_buyers` from the whole transaction history irrespective of the selected range; range param is passed to _overview but not forwarded here — milestones that reference the current range window could feel more meaningful if scoped by range.",
+    "server.checkout_session: when a promo_code is given the promo's `max_uses` check happens pre-fulfilment but the `uses` counter only increments on successful fulfilment — a burst of unfulfilled checkouts past the cap will all succeed at the API layer. Consider a reservation or soft-reserve on session create.",
+    "server.admin_assign_streamer uses `handle.strip().lstrip('#@')` — good; but there is no check that the target isn't already a mod/admin (grant is a no-op). Minor polish: dedupe granted_at writes.",
+    "streaming.py: /api/stream/start, /api/stream/ingress and /api/stream/ingress/reset correctly call srv.require_can_go_live(u); GET /api/stream/ingress remains open so the UI can show status for a non-granted user — intentional and safe.",
+    "Stories.tsx shows go-live-btn when `user.can_go_live` is true OR when there's a `myLive` broadcast — the OR means a stale `myLive` could show the button to a user who has since lost can_stream. Low risk but worth gating."
+  ],
+  "updated_files": ["/app/backend/tests/test_golive_promos_milestones_watch.py"],
+  "success_rate": {"backend": "100% (30/30)", "frontend": "100% (all acceptance checks pass)"},
+  "test_credentials": "creator@skali.test, fan@skali.test, owner@skali.test, mod@skali.test — all password Test1234!",
+  "seed_data_creation": "Pytest fixtures seed/clean: creator_promos (CHKTEST + TESTPROMO), subscriptions (TEST_golive marker), live_streams (TEST_golive marker), watch_sessions. UI test seeded one TEST_golive_ui subscription and promo UIPROMO1; both cleaned after run.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend tests: /app/backend/tests/test_golive_promos_milestones_watch.py (30 tests, runs in ~7s under xdist loadscope). Also run /app/backend/tests/test_creator_analytics.py from previous iteration to catch regressions in the renamed overview fields. Frontend root is /app/src (Vite). LiveKit is not configured in preview — /api/live/start returns 500 ('LiveKit is not configured') once past the 403 gate; that's expected and the tests tolerate 200|500. Flakes to watch: parallel execution of TestMilestones + TestCheckoutPromo on different workers can briefly race on profile.creator_override; the module-scoped mongo fixture handles cleanup."
+}

@@ -1,0 +1,20 @@
+{
+  "summary": "Iteration 29 — Streamer Alerts (Find → Streamers). Backend 5/5 passed via pytest, frontend all acceptance checks pass on mobile 390x860. Backend: GET /api/streamers returns {live, creators[]} where every creator carries alert:bool and is_self:bool; tester present with is_self=false for viewer and is_self=true for tester themself. PUT /api/live-alerts/thisismajorofficial toggles enabled, GET reflects stored value (false→false, true→true after PUT). Unknown handle returns 404. Frontend: /search?tab=streamers as viewer renders tester row with data-testid='streamer-alert-thisismajorofficial', label 'Alert me' (aria-pressed=false) initially → click toggles to 'Alerts on' (aria-pressed=true) without navigating off /search, reload persists the state (verified via /api/streamers alert field). Toggled back to false to leave state clean. As tester, their own row data-testid='streamer-thisismajorofficial' is present but there is NO streamer-alert bell (is_self branch). Code review of server.py _notify_live (~L5760): for aud=='public' targets |= alerts_subscribed_for(host) adds opted-in viewers; for every audience targets -= alerts_disabled_for(host) correctly removes opt-outs; push url is updated via live_alerts.watch_url. live_alerts.alert_enabled falls back to alert_default (approved follower OR accepted inner-circle member) when no explicit pref exists — correct per spec.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/tests/backend_iter29.py", "/app/test_reports/pytest/iter29.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py streamers endpoint calls alert_enabled per creator inside the loop (N+1 Mongo lookup on live_alerts). Fine at 300-creator cap but worth batching to a single find({'user_id':u,'creator_id':{'$in':ids}}) for scale.",
+    "FindStreamers.tsx AlertBell: on toggle, api.setLiveAlert error rolls back optimistic UI with onChange(!next) but doesn't surface a toast — user sees silent revert. Low priority UX nit.",
+    "live_alerts.alert_default queries follows + inner on every GET; could be short-circuited or cached per request if streamers list grows."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (5/5)", "frontend": "100% (all acceptance criteria)"},
+  "test_credentials": "tester@skali.test / Test1234! (#thisismajorofficial, creator) and viewer@skali.test / Test1234! (#viewer). Login POST /api/auth/login returns access_token.",
+  "seed_data_creation": "Toggled viewer's live_alerts pref for thisismajorofficial during tests, left in final state enabled=false (clean baseline).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Streamer Alerts fully verified. api.setLiveAlert maps to PUT /api/live-alerts/{handle} with {enabled}. Bell is rendered only when !c.is_self in FindStreamers.tsx line 80. The data-testid pattern is streamer-alert-{handle}. For reset in future tests just PUT {enabled:false}. No regression expected on iter-28 features.",
+  "rca of the issue": "N/A — no bugs found."
+}

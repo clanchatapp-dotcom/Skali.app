@@ -1,0 +1,24 @@
+{
+  "summary": "Phase 1 UX/flow makeover (navigation reshuffle) tested on canonical ROOT app (/app/src served at preview origin). All data-testids and flow requirements verified at 390x844 mobile and 1920x800 desktop. Login via /api/auth/login (tester@skali.local) returns 200. Mobile bottom nav shows exactly 5 items (feed, find, messages, activity, me) evenly spaced; no live/choices tabs. Desktop sidebar links: Feed, Find, Messages, Activity, Groups, My Profile, Connections, Settings, Reels — no Live, no Choices. Feed header has feed-tabs with feed-tab-general, feed-tab-followers (label 'Following'), feed-tab-interests; clicking Interests calls api.interestsFeed and shows feed-empty when empty. End-to-end data test: followed /interest/gaming (interest-follow-btn), created public post with tag 'gaming' via API, Feed > Interests tab rendered the new post. Story rail Go Live (go-live-btn) and Your Story present on Feed. Find page: find-tab-discover + find-tab-choices + find-search-input; Choices tab renders find-choices-panel with choices-optin-btn for a non-opted-in user. /search?tab=choices deep link opens Choices tab directly. Old /choices standalone route still works (choices-optin-card present). Own profile: creator-studio block contains profile-add-story + creator-studio-live; clicking creator-studio-live navigates to /live where live-page-golive is rendered. Profile tab row shows only media/wall/boards/audio — no shop. My Links page for own handle and tester2 both render links-shop-section. No horizontal overflow (0px) on Feed, Find, Profile, Links at 390px. Cleaned up: deleted the test post and left gaming interest followed (pre-existing follow state wasn't tracked; this is a tiny side effect from the data verification step).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Layout.tsx mobile bottom nav currently maps NAV (4 items) + hardcoded Me link. If future items are added, consider unifying into a single array for maintainability.",
+    "Profile.tsx TABS constant correctly drops 'shop'; ShopTab is still exported for Links.tsx reuse — clean separation, good.",
+    "Feed.tsx Interests branch uses api.interestsFeed() with no pagination param — fine for now, but note infinite scroll support may need adding later."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100%"},
+  "test_credentials": "tester@skali.local / Tester123! (handle: skalitester); tester2@skali.local / Tester123! (handle: tester2)",
+  "seed_data_creation": "Followed /interest/gaming as skalitester (follow state left intact — minor side effect). Created and then deleted a public test post 'TEST_navshuffle gaming post' tagged #gaming to verify Interests feed integration.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Preview origin is https://699f8874-5189-442a-9e2c-3a2f8dbf3a24.preview.emergentagent.com. Canonical app at /app/src served via root Vite on port 3000 — DO NOT touch /app/frontend (stale). Auth token key in localStorage is 'cc_token' and comes from /api/auth/login .access_token. SPA login form is flaky under headless; injecting token via localStorage + navigating works reliably. Use wait_until='domcontentloaded' (never networkidle). All Phase 1 reshuffle testids verified: bottom-nav-{feed,find,messages,activity,me}, feed-tabs, feed-tab-{general,followers,interests}, feed-empty, go-live-btn, find-tab-{discover,choices}, find-search-input, find-choices-panel, choices-optin-btn, choices-optin-card, creator-studio, profile-add-story, creator-studio-live, live-page-golive, links-shop-section.",
+  "rca_of_the_issue": "N/A — no issues found. Phase 1 navigation reshuffle is complete and matches spec on both mobile (390px) and desktop (1920px)."
+}

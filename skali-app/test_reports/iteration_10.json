@@ -1,0 +1,23 @@
+{
+  "summary": "Deploy-image simulation + preview-URL regression PASSED. Simulated Emergent deploy exactly as spec: `rsync -a --exclude node_modules --exclude build /app/frontend/ /tmp/img/ && cd /tmp/img && yarn install --prefer-offline --check-files --network-timeout 100000 && yarn build` -> exit 0. Output /tmp/img/build/index.html is the Skali Vite html with `<script src=\"/assets/index-N5iLWVp1.js\">` and boot-splash markup; it is NOT the CRA 'Emergent | Fullstack App' template. Bundle `build/assets/index-N5iLWVp1.js` contains both 'clanchatapp-backend.onrender.com' and 'register-dob', and contains NO 'preview.emergentagent.com'. Served build with `npx vite preview --outDir build --port 4174 --host 0.0.0.0`: GET /login -> 200, Skali 'Welcome back' login rendered, 'Create one' navigates to register, data-testid register-dob-day/month/year-select all visible. Clamp verified: Jan 31 2000 -> switch month to Feb -> day input_value clamps to 29; subsequently selecting year 2021 (current-5) further clamps to 28 (Feb 2021). too-young guard verified: data-testid register-dob-too-young-msg visible with text 'You must be 13+ to join Skali. Come back when you're a little older!'. Network: 2 requests to clanchatapp-backend.onrender.com/api/, 0 requests to preview.emergentagent.com. Preview regression https://birthday-picker-1.preview.emergentagent.com/login still renders Skali 'Welcome back' login with 'Create one' link (screenshot confirmed). Vite preview on :4174 killed after test.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Local preview (http://localhost:4174) -> Render /api/", "issue": "CORS blocked: 'Access to fetch at https://clanchatapp-backend.onrender.com/api/ from origin http://localhost:4174 has been blocked by CORS policy'. Not a build issue; Render backend does not whitelist localhost. Expected to work from the deployed Skali origin (skaliapp.com / birthday-picker-1.preview.emergentagent.com).", "affected_selectors": []}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Main bundle index-N5iLWVp1.js = 1.45MB (380KB gzip). Consider manualChunks/code-splitting (livekit, firebase, supabase are likely big chunks).",
+    "/app/frontend/public still ships ClanChat_Product_Spec_v4.1.pdf, v4.2.pdf, ClanChat_Roadmap_v1.1.pdf; these are copied into build/ and bloat the deploy image. Move out of /public if unused by the app."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a", "frontend": "100%"},
+  "seed_data_creation": "none",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Deploy flow is now self-contained inside /app/frontend/ (no cd .. hacks). `yarn build` runs `vite build --outDir build --emptyOutDir` and vite.config.ts at /app/frontend/vite.config.ts hard-codes REACT_APP_BACKEND_URL to https://clanchatapp-backend.onrender.com via `define`. index.html entry is /app/frontend/index.html (not public/index.html — public/index.html is a leftover CRA template, ignored by Vite). resolve.extensions puts .tsx before .js so leftover App.js/index.js in /app/frontend/src are ignored in favor of main.tsx/App.tsx. For future deploy regressions, re-run the rsync+yarn-install+yarn-build sequence in /tmp/img and grep the resulting JS bundle for 'clanchatapp-backend.onrender.com' / 'register-dob' and ensure absence of 'preview.emergentagent.com'."
+}

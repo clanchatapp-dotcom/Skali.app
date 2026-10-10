@@ -237,6 +237,9 @@ export const api = {
 
   // Phase 2 (web): OBS streaming via LiveKit Ingress, live-chat moderation, 24h VODs
   streamIngress: () => req('/stream/ingress'),
+  streamSettings: () => req('/stream/settings'),
+  saveStreamSettings: (b: { title?: string; category?: string; audience?: string; auto_live?: boolean }) =>
+    req('/stream/settings', { method: 'PUT', body: j(b) }),
   streamCreateIngress: () => req('/stream/ingress', { method: 'POST' }),
   streamResetIngress: () => req('/stream/ingress/reset', { method: 'POST' }),
   streamStart: (b: { title?: string; category?: string; audience?: string }) =>

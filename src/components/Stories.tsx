@@ -7,6 +7,9 @@ import { useAuth } from '../lib/auth'
 import { Plus, X, Loader2, Trash2, Eye, Radio, Image as ImageIcon, PlayCircle } from 'lucide-react'
 import LiveModal from './LiveModal'
 import MediaLightbox from './MediaLightbox'
+import { Capacitor } from '@capacitor/core'
+
+const isNative = (() => { try { return Capacitor.isNativePlatform() } catch { return false } })()
 
 export type StoryItem = {
   id: string; media_url: string; media_type: string; caption: string
@@ -335,10 +338,12 @@ export function StoryRail() {
               className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl hover:bg-white/5 text-left text-white">
               <ImageIcon className="h-5 w-5 text-brand" /> Photo or video story
             </button>
-            <button onClick={() => { setChooser(false); setLiveOpen({ mode: 'host' }) }} data-testid="story-chooser-live"
-              className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl hover:bg-white/5 text-left text-white">
-              <Radio className="h-5 w-5 text-rose-400" /> Live Story
-            </button>
+            {isNative && (
+              <button onClick={() => { setChooser(false); setLiveOpen({ mode: 'host' }) }} data-testid="story-chooser-live"
+                className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl hover:bg-white/5 text-left text-white">
+                <Radio className="h-5 w-5 text-rose-400" /> Live Story
+              </button>
+            )}
             <button onClick={() => setChooser(false)} data-testid="story-chooser-cancel"
               className="w-full px-4 py-3 rounded-xl text-slate-400 hover:bg-white/5 text-center">Cancel</button>
           </div>

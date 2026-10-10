@@ -25,6 +25,7 @@ log = logging.getLogger('skali.streaming')
 VOD_TTL = timedelta(hours=24)
 IDLE_END = timedelta(minutes=3)
 LOOP_EVERY = 60
+AUTO_EVERY = 10
 OBS_AUDIENCES = {'public', 'followers', 'inner'}
 _STATUS = {'ENDPOINT_PUBLISHING': 'publishing', 'ENDPOINT_BUFFERING': 'buffering',
            'ENDPOINT_ERROR': 'error'}
@@ -216,6 +217,79 @@ async def _live_doc(uid: str) -> Optional[dict]:
     return await srv.db.live_streams.find_one({'host_id': uid, 'status': 'live', 'source': 'obs'}, {'_id': 0})
 
 
+class StreamSettings(BaseModel):
+    title: Optional[str] = None
+    category: Optional[str] = None
+    audience: Optional[str] = None
+    auto_live: Optional[bool] = None
+
+
+async def _get_settings(uid: str) -> dict:
+    d = await srv.db.stream_settings.find_one({'user_id': uid}, {'_id': 0}) or {}
+    return {'title': d.get('title', ''), 'category': d.get('category', 'just_chatting'),
+            'audience': d.get('audience', 'public'), 'auto_live': d.get('auto_live', True)}
+
+
+async def _start_session(u: dict, title: str, category: str, audience: str) -> dict:
+    now = _now()
+    await srv.db.live_streams.update_many({'host_id': u['id'], 'status': 'live'},
+                                          {'$set': {'status': 'ended', 'ended_at': now.isoformat()}})
+    live_id = uuid.uuid4().hex[:12]
+    audience = audience if audience in OBS_AUDIENCES else 'public'
+    category = category if category in srv.LIVE_CATEGORY_KEYS else 'just_chatting'
+    doc = {'id': live_id, 'room': room_for(u['id']), 'host_id': u['id'], 'source': 'obs',
+           'host': {'handle': u['handle'], 'display_name': u['display_name'],
+                    'avatar_url': u.get('avatar_url'), 'account_nsfw': srv.is_adult_account(u),
+                    'role': srv.effective_role(u)},
+           'audience': audience, 'category': category, 'group_id': None,
+           'title': (title or '')[:120], 'save': False, 'status': 'live',
+           'peak_viewers': 0, 'lk_viewers': 0, 'started_at': now.isoformat(),
+           'last_publishing_at': now.isoformat()}
+    await srv.db.live_streams.insert_one(dict(doc))
+    vod = {'id': live_id, 'live_id': live_id, 'host_id': u['id'], 'title': doc['title'],
+           'category': category, 'audience': audience, 'started_at': now.isoformat(),
+           'path': f"vods/{u['id']}/{live_id}.mp4", 'egress_id': '', 'status': 'disabled'}
+    s3 = _s3_upload()
+    if s3 is not None:
+        try:
+            await _ensure_vod_bucket()
+        except Exception as e:
+            log.warning('vod bucket ensure failed: %s', e)
+        try:
+            eg = await _lk(lambda c: c.egress.start_room_composite_egress(lk_api.RoomCompositeEgressRequest(
+                room_name=doc['room'], layout='speaker',
+                file_outputs=[lk_api.EncodedFileOutput(file_type=lk_api.EncodedFileType.MP4,
+                                                       filepath=vod['path'], s3=s3)])))
+            vod.update(egress_id=eg.egress_id, status='recording')
+        except Exception as e:
+            log.warning('start egress failed: %s', e)
+            vod.update(status='failed', error='Recording could not start')
+    await srv.db.stream_vods.insert_one(dict(vod))
+    try:
+        await srv._notify_live(doc, u)
+    except Exception as e:
+        log.warning('obs live notify failed: %s', e)
+    return doc
+
+
+_auto_lock = asyncio.Lock()
+
+
+async def _maybe_auto_start(u: dict) -> Optional[dict]:
+    """OBS is publishing and the user isn't live: go live with saved stream info."""
+    if not srv.can_go_live(u):
+        return None
+    st = await srv.db.stream_settings.find_one({'user_id': u['id']}, {'_id': 0}) or {}
+    if not st.get('auto_live', True) or st.get('hold'):
+        return None
+    async with _auto_lock:
+        live = await _live_doc(u['id'])
+        if live:
+            return live
+        s = await _get_settings(u['id'])
+        return await _start_session(u, s['title'], s['category'], s['audience'])
+
+
 async def is_mod(host_id: str, uid: str) -> bool:
     if not await srv.db.stream_mods.find_one({'host_id': host_id, 'mod_id': uid}):
         return False
@@ -303,8 +377,36 @@ def build_router() -> APIRouter:
             return out
         out['ingress'] = _ingress_out(await _ingress_info(u['id']))
         live = await _live_doc(u['id'])
+        if not live and out['ingress'] and out['ingress']['status'] == 'publishing':
+            live = await _maybe_auto_start(u)  # Twitch-style: OBS signal -> live
+        elif out['ingress'] and out['ingress']['status'] != 'publishing':
+            await db.stream_settings.update_one({'user_id': u['id']}, {'$set': {'hold': False}})
         out['live'] = srv._live_out(live) if live else None
+        out['settings'] = await _get_settings(u['id'])
         return out
+
+    @r.get('/settings')
+    async def get_settings(u: dict = Depends(auth)):
+        return await _get_settings(u['id'])
+
+    @r.put('/settings')
+    async def put_settings(body: StreamSettings, u: dict = Depends(auth)):
+        upd = {}
+        if body.title is not None:
+            upd['title'] = body.title.strip()[:120]
+        if body.category is not None and body.category in srv.LIVE_CATEGORY_KEYS:
+            upd['category'] = body.category
+        if body.audience is not None and body.audience in OBS_AUDIENCES:
+            upd['audience'] = body.audience
+        if body.auto_live is not None:
+            upd['auto_live'] = bool(body.auto_live)
+        if upd:
+            await db.stream_settings.update_one({'user_id': u['id']}, {'$set': {'user_id': u['id'], **upd}}, upsert=True)
+            live = await _live_doc(u['id'])
+            live_upd = {k: v for k, v in upd.items() if k in ('title', 'category', 'audience')}
+            if live and live_upd:  # edit stream info while live, like Twitch
+                await db.live_streams.update_one({'id': live['id']}, {'$set': live_upd})
+        return await _get_settings(u['id'])
 
     @r.post('/ingress')
     async def create_ingress(u: dict = Depends(auth)):
@@ -334,45 +436,7 @@ def build_router() -> APIRouter:
             raise HTTPException(400, 'Create your stream key first.')
         if _ingress_out(info)['status'] != 'publishing':
             raise HTTPException(409, 'We are not receiving video from OBS yet. Click "Start Streaming" in OBS, then try again.')
-        now = _now()
-        await db.live_streams.update_many({'host_id': u['id'], 'status': 'live'},
-                                          {'$set': {'status': 'ended', 'ended_at': now.isoformat()}})
-        live_id = uuid.uuid4().hex[:12]
-        audience = body.audience if body.audience in OBS_AUDIENCES else 'public'
-        category = body.category if body.category in srv.LIVE_CATEGORY_KEYS else 'just_chatting'
-        doc = {'id': live_id, 'room': room_for(u['id']), 'host_id': u['id'], 'source': 'obs',
-               'host': {'handle': u['handle'], 'display_name': u['display_name'],
-                        'avatar_url': u.get('avatar_url'), 'account_nsfw': srv.is_adult_account(u),
-                        'role': srv.effective_role(u)},
-               'audience': audience, 'category': category, 'group_id': None,
-               'title': (body.title or '')[:120], 'save': False, 'status': 'live',
-               'peak_viewers': 0, 'lk_viewers': 0, 'started_at': now.isoformat(),
-               'last_publishing_at': now.isoformat()}
-        await db.live_streams.insert_one(dict(doc))
-        vod = {'id': live_id, 'live_id': live_id, 'host_id': u['id'], 'title': doc['title'],
-               'category': category, 'audience': audience, 'started_at': now.isoformat(),
-               'path': f"vods/{u['id']}/{live_id}.mp4", 'egress_id': '', 'status': 'disabled'}
-        s3 = _s3_upload()
-        if s3 is not None:
-            try:
-                await _ensure_vod_bucket()
-            except Exception as e:
-                log.warning('vod bucket ensure failed: %s', e)
-        if s3 is not None:
-            try:
-                eg = await _lk(lambda c: c.egress.start_room_composite_egress(lk_api.RoomCompositeEgressRequest(
-                    room_name=doc['room'], layout='speaker',
-                    file_outputs=[lk_api.EncodedFileOutput(file_type=lk_api.EncodedFileType.MP4,
-                                                           filepath=vod['path'], s3=s3)])))
-                vod.update(egress_id=eg.egress_id, status='recording')
-            except Exception as e:
-                log.warning('start egress failed: %s', e)
-                vod.update(status='failed', error='Recording could not start')
-        await db.stream_vods.insert_one(dict(vod))
-        try:
-            await srv._notify_live(doc, u)
-        except Exception as e:
-            log.warning('obs live notify failed: %s', e)
+        doc = await _start_session(u, body.title or '', body.category, body.audience)
         return srv._live_out(doc)
 
     @r.post('/end')
@@ -380,6 +444,8 @@ def build_router() -> APIRouter:
         s = await _live_doc(u['id'])
         if not s:
             raise HTTPException(404, "You're not live right now.")
+        # Don't auto-restart while OBS is still sending; clears once OBS stops.
+        await db.stream_settings.update_one({'user_id': u['id']}, {'$set': {'user_id': u['id'], 'hold': True}}, upsert=True)
         await end_session(s)
         return {'ok': True, 'id': s['id']}
 
@@ -586,6 +652,37 @@ async def run_maintenance_once():
             log.warning('stream maintenance step %s failed: %s', step.__name__, e)
 
 
+async def _sweep_auto_live():
+    if not lk_configured():
+        return
+    docs = {d['ingress_id']: d['user_id'] async for d in srv.db.stream_ingress.find({}, {'_id': 0})}
+    if not docs:
+        return
+    res = await _lk(lambda c: c.ingress.list_ingress(lk_api.ListIngressRequest()))
+    for info in res.items:
+        uid = docs.get(info.ingress_id)
+        if not uid:
+            continue
+        try:
+            if _ingress_out(info)['status'] != 'publishing':
+                await srv.db.stream_settings.update_one({'user_id': uid, 'hold': True}, {'$set': {'hold': False}})
+            elif not await _live_doc(uid):
+                u = await srv.db.profiles.find_one({'id': uid}, {'_id': 0})
+                if u:
+                    await _maybe_auto_start(u)
+        except Exception as e:
+            log.warning('auto-live sweep failed (%s): %s', uid, e)
+
+
+async def _auto_live_loop():
+    while True:
+        try:
+            await _sweep_auto_live()
+        except Exception as e:
+            log.warning('auto-live loop failed: %s', e)
+        await asyncio.sleep(AUTO_EVERY)
+
+
 async def _maintenance_loop():
     while True:
         await run_maintenance_once()
@@ -600,3 +697,4 @@ def setup(app, server_module):
     @app.on_event('startup')
     async def _start_stream_maintenance():
         asyncio.create_task(_maintenance_loop())
+        asyncio.create_task(_auto_live_loop())

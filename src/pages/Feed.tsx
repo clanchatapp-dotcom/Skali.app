@@ -6,7 +6,8 @@ import { TIER, TierKey } from '../lib/ui'
 import PostCard from '../components/PostCard'
 import { StoryRail } from '../components/Stories'
 import { INTERESTS } from '../lib/interests'
-import { Image as ImageIcon, Loader2, X, Mic, Square } from 'lucide-react'
+import { Image as ImageIcon, Loader2, X, Mic, Square, Clock } from 'lucide-react'
+import ScheduledPostsPanel, { toLocalInput, fmtWhen } from '../components/ScheduledPostsPanel'
 
 const FEED_TABS = [
   { key: 'general', label: 'General' },
@@ -14,7 +15,9 @@ const FEED_TABS = [
   { key: 'interests', label: 'Interests' }
 ] as const
 
-function Composer({ onPosted }: { onPosted: () => void }) {
+function Composer({ onPosted, onScheduled }: { onPosted: () => void; onScheduled: (s: any) => void }) {
+  const [schedOn, setSchedOn] = useState(false)
+  const [schedAt, setSchedAt] = useState('')
   const [tier, setTier] = useState<TierKey>('public')
   const [text, setText] = useState('')
   const [tags, setTags] = useState<string[]>([])
@@ -108,12 +111,13 @@ function Composer({ onPosted }: { onPosted: () => void }) {
 
   const submit = async () => {
     if (!text.trim() && !mediaList.length) return
+    if (schedOn && !schedAt) { alert('Pick a date and time'); return }
 
     setBusy(true)
 
     try {
       const hasVisual = mediaList.some(m => m.type !== 'audio')
-      await api.createPost({
+      const r = await api.createPost({
         tier,
         text,
         media: mediaList,
@@ -122,7 +126,8 @@ function Composer({ onPosted }: { onPosted: () => void }) {
         tags,
         nsfw_tags: nsfwTags,
         people_tags: people,
-        ai_label: hasVisual ? aiLabel : 'none'
+        ai_label: hasVisual ? aiLabel : 'none',
+        ...(schedOn ? { scheduled_at: new Date(schedAt).toISOString() } : {})
       })
 
       setText('')
@@ -134,8 +139,11 @@ function Composer({ onPosted }: { onPosted: () => void }) {
       setTagInput('')
       setPeopleInput('')
       setExpanded(false)
+      setSchedOn(false)
+      setSchedAt('')
 
-      onPosted()
+      if (r?.scheduled) onScheduled(r)
+      else onPosted()
     } catch (e: any) {
       alert(e.message)
     } finally {
@@ -344,6 +352,15 @@ function Composer({ onPosted }: { onPosted: () => void }) {
             </div>
           )}
 
+          {/* Schedule */}
+          {schedOn && (
+            <div className="mt-3 flex items-center gap-2" data-testid="composer-schedule-row">
+              <Clock className="h-4 w-4 text-brand shrink-0" />
+              <input type="datetime-local" value={schedAt} min={toLocalInput(Date.now() + 60000)} onChange={e => setSchedAt(e.target.value)}
+                data-testid="composer-schedule-datetime" className="flex-1 bg-ink border border-edge rounded-xl px-3 py-2 text-sm outline-none focus:border-brand [color-scheme:dark]" />
+            </div>
+          )}
+
           {/* Media + Post */}
           <div className="flex items-center gap-2 mt-3">
 
@@ -387,12 +404,24 @@ function Composer({ onPosted }: { onPosted: () => void }) {
             )}
 
             <button
+              type="button"
+              onClick={() => { setSchedOn(v => !v); if (!schedAt) setSchedAt(toLocalInput(Date.now() + 3600000)) }}
+              data-testid="composer-schedule-toggle"
+              title={schedOn ? 'Post now instead' : 'Schedule for later'}
+              className={`h-10 w-10 grid place-items-center rounded-xl border transition ${
+                schedOn ? 'bg-brand/20 border-brand text-brand' : 'bg-white/5 border-edge hover:bg-white/10'
+              }`}
+            >
+              <Clock className="h-5 w-5" />
+            </button>
+
+            <button
               onClick={submit}
               data-testid="composer-submit"
               disabled={busy || (!text.trim() && !mediaList.length)}
               className="ml-auto px-6 py-2.5 rounded-xl bg-gradient-to-r from-brand to-violet-600 font-semibold disabled:opacity-50"
             >
-              {busy ? 'Posting…' : 'Post'}
+              {busy ? (schedOn ? 'Scheduling…' : 'Posting…') : (schedOn ? 'Schedule' : 'Post')}
             </button>
 
           </div>
@@ -409,6 +438,23 @@ export default function Feed() {
   const [loading, setLoading] = useState(true)
   const headRef = useRef<HTMLDivElement | null>(null)
   const [headH, setHeadH] = useState(200)
+  const [scheduled, setScheduled] = useState<any[]>([])
+  const [schedPanel, setSchedPanel] = useState(false)
+  const [schedNote, setSchedNote] = useState('')
+  const loadScheduled = () => api.scheduledPosts().then(setScheduled).catch(() => {})
+  useEffect(() => { loadScheduled() }, [])
+  // when a queued post's time passes, refresh so it shows up in the feed
+  useEffect(() => {
+    if (!scheduled.length) return
+    const next = new Date(scheduled[0].scheduled_at).getTime() - Date.now()
+    const t = setTimeout(() => { loadScheduled(); load() }, Math.max(next, 0) + 25000)
+    return () => clearTimeout(t)
+  }, [scheduled])
+  const onScheduled = (s: any) => {
+    setScheduled(p => [...p, s].sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at)))
+    setSchedNote(`Scheduled for ${fmtWhen(s.scheduled_at)}`)
+    setTimeout(() => setSchedNote(''), 4000)
+  }
 
   useEffect(() => {
     const el = headRef.current
@@ -455,6 +501,13 @@ export default function Feed() {
           My Feed
         </h1>
 
+        {scheduled.length > 0 && (
+          <button onClick={() => setSchedPanel(true)} data-testid="feed-scheduled-chip"
+            className="flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-full bg-brand/15 text-brand border border-brand/30 hover:bg-brand/25">
+            <Clock className="h-3.5 w-3.5" /> {scheduled.length}
+          </button>
+        )}
+
         {/* General / Following / Interests tab selector */}
         <div className="ml-auto flex items-center bg-panel border border-edge rounded-full p-1" role="tablist" data-testid="feed-tabs">
           {FEED_TABS.map(t => (
@@ -480,7 +533,13 @@ export default function Feed() {
         <LiveNowBanner />
       </div>
 
-      <Composer onPosted={load} />
+      <Composer onPosted={load} onScheduled={onScheduled} />
+      {schedPanel && <ScheduledPostsPanel items={scheduled} setItems={setScheduled} onClose={() => setSchedPanel(false)} />}
+      {schedNote && (
+        <div data-testid="feed-scheduled-toast" className="absolute left-1/2 -translate-x-1/2 bottom-6 z-[60] px-4 py-2 rounded-full bg-panel border border-brand/40 text-sm text-slate-100 shadow-lg flex items-center gap-2">
+          <Clock className="h-4 w-4 text-brand" /> {schedNote}
+        </div>
+      )}
 
       {/* Feed content — the ONLY scrolling area. The header (title, tabs, stories) is pinned above it. */}
       <div className="absolute inset-0 overflow-y-auto overscroll-contain px-4 pb-4 space-y-4 touch-pan-y" style={{ paddingTop: headH + 16 }} data-testid="feed-scroll">

@@ -729,6 +729,7 @@ class PostCreate(BaseModel):
     nsfw_tags: Optional[list] = None    # closed vocab (@NSFW/@GNSFW/@LNSFW/@TNSFW); chosen, not typed
     people_tags: Optional[list] = None  # handles to tag; each requires that person's approval
     ai_label: Optional[str] = 'none'  # none | generated | assisted | altered
+    scheduled_at: Optional[str] = None  # ISO time in the future -> queued instead of posted now
 
 class ReactBody(BaseModel):
     emoji: str  # like | love | haha | wow | sad | angry
@@ -1662,7 +1663,9 @@ async def _start_scheduled_wall_worker():
     async def loop():
         while True:
             try:
+                await _send_schedule_reminders()
                 await _publish_due_wall_posts()
+                await _publish_due_feed_posts()
             except Exception as e:
                 logging.getLogger(__name__).warning(f'scheduled wall worker: {e}')
             await asyncio.sleep(20)
@@ -1702,9 +1705,10 @@ async def edit_scheduled_wall(wall_id: str, body: WallScheduleEdit, u: dict = De
         if when <= datetime.now(timezone.utc) + timedelta(seconds=15):
             raise HTTPException(400, 'Pick a time in the future')
         upd['scheduled_at'] = when.isoformat()
+        upd['reminded'] = _reminder_too_late(when)
     if upd:
         await db.wall.update_one({'id': wall_id}, {'$set': upd})
-    return {'ok': True, **upd}
+    return {'ok': True, **{k: v for k, v in upd.items() if k != 'reminded'}}
 
 
 async def can_wall(viewer: str, owner: str) -> bool:
@@ -1751,6 +1755,7 @@ async def post_wall(handle: str, body: WallPost, u: dict = Depends(get_current_u
         if when > datetime.now(timezone.utc) + timedelta(seconds=15):
             sdoc = {'id': str(uuid.uuid4()), 'owner_id': owner['id'], 'author_id': u['id'],
                     'text': text[:2000], 'status': 'scheduled', 'scheduled_at': when.isoformat(),
+                    'reminded': _reminder_too_late(when),
                     'created_at': datetime.now(timezone.utc).isoformat()}
             await db.wall.insert_one(dict(sdoc))
             return {'scheduled': True, 'id': sdoc['id'], 'text': sdoc['text'], 'scheduled_at': sdoc['scheduled_at']}
@@ -2068,17 +2073,127 @@ async def create_post(body: PostCreate, u: dict = Depends(get_current_user)):
            'nsfw_tags': nsfw_tags, 'nsfw': is_nsfw,
            'people_tags': people, 'ai_label': ai_label,
            'likes': [], 'created_at': datetime.now(timezone.utc).isoformat()}
+    if body.scheduled_at:
+        try:
+            when = _parse_dt_utc(body.scheduled_at)
+        except Exception:
+            raise HTTPException(400, 'Invalid scheduled time')
+        if when > datetime.now(timezone.utc) + timedelta(seconds=15):
+            sdoc = {**doc, 'status': 'scheduled', 'scheduled_at': when.isoformat(),
+                    'reminded': _reminder_too_late(when)}
+            await db.scheduled_posts.insert_one(dict(sdoc))
+            return _scheduled_post_out(sdoc)
     await db.posts.insert_one(dict(doc))
-    # Block 5: register tags in the registry (dedupe + counts + nsfw flag).
-    if tier == 'public':
-        await register_tags(tags, nsfw=False)
-        await register_tags([t.lstrip('@').lower() for t in nsfw_tags], nsfw=True)
-    # NSFW anywhere on an account routes 100% of its money through CCBill (Block 3).
-    if is_nsfw and not u.get('account_nsfw'):
-        await db.profiles.update_one({'id': u['id']}, {'$set': {'account_nsfw': True}})
-    for pt in people:
-        await add_activity(pt['user_id'], 'tag_request', u, 'tagged you in a post', doc['id'])
+    await _post_published_effects(doc, u)
     return await post_out(doc, u['id'])
+
+
+async def _post_published_effects(doc: dict, u: dict):
+    """Side effects once a feed post is live (tag registry, NSFW account flag, people-tag requests)."""
+    if doc['tier'] == 'public':
+        await register_tags(doc.get('tags') or [], nsfw=False)
+        await register_tags([t.lstrip('@').lower() for t in doc.get('nsfw_tags') or []], nsfw=True)
+    if doc.get('nsfw') and not u.get('account_nsfw'):
+        await db.profiles.update_one({'id': u['id']}, {'$set': {'account_nsfw': True}})
+    for pt in doc.get('people_tags') or []:
+        await add_activity(pt['user_id'], 'tag_request', u, 'tagged you in a post', doc['id'])
+
+
+SCHEDULE_REMINDER_MIN = 5
+
+
+def _reminder_too_late(when: datetime) -> bool:
+    """True when there isn't a full reminder window before `when` (so no reminder is sent)."""
+    return when - datetime.now(timezone.utc) < timedelta(minutes=SCHEDULE_REMINDER_MIN + 1)
+
+
+def _scheduled_post_out(s: dict) -> dict:
+    return {'scheduled': True, 'id': s['id'], 'tier': s['tier'], 'text': s.get('text', ''),
+            'media': s.get('media') or [], 'tags': s.get('tags') or [], 'scheduled_at': s['scheduled_at']}
+
+
+class ScheduledPostEdit(BaseModel):
+    text: Optional[str] = None
+    scheduled_at: Optional[str] = None
+
+
+async def _publish_due_feed_posts():
+    now_iso = datetime.now(timezone.utc).isoformat()
+    async for s in db.scheduled_posts.find({'status': 'scheduled', 'scheduled_at': {'$lte': now_iso}}).limit(100):
+        claim = await db.scheduled_posts.update_one({'id': s['id'], 'status': 'scheduled'},
+                                                    {'$set': {'status': 'published'}})
+        if not claim.modified_count:
+            continue
+        author = await db.profiles.find_one({'id': s['author_id']}, {'_id': 0})
+        if not author:
+            continue
+        doc = {k: v for k, v in s.items() if k not in ('_id', 'status', 'scheduled_at', 'reminded')}
+        doc['created_at'] = s['scheduled_at']
+        await db.posts.insert_one(dict(doc))
+        await _post_published_effects(doc, author)
+
+
+async def _send_schedule_reminders():
+    """Heads-up to the author a few minutes before a scheduled wall/feed post goes live."""
+    soon = (datetime.now(timezone.utc) + timedelta(minutes=SCHEDULE_REMINDER_MIN)).isoformat()
+    for coll, label in ((db.wall, 'wall post'), (db.scheduled_posts, 'post')):
+        async for s in coll.find({'status': 'scheduled', 'reminded': {'$ne': True}, 'scheduled_at': {'$lte': soon}}).limit(100):
+            claim = await coll.update_one({'id': s['id'], 'reminded': {'$ne': True}}, {'$set': {'reminded': True}})
+            if not claim.modified_count:
+                continue
+            author = await db.profiles.find_one({'id': s['author_id']}, {'_id': 0})
+            if not author:
+                continue
+            where = ''
+            if coll is db.wall and s['owner_id'] != s['author_id']:
+                owner = await db.profiles.find_one({'id': s['owner_id']}, {'_id': 0})
+                where = f" on #{owner['handle']}'s wall" if owner else ''
+            msg = f'— your scheduled {label}{where} goes live in {SCHEDULE_REMINDER_MIN} minutes'
+            await add_activity(author['id'], 'schedule_reminder', author, msg, s['id'])
+            await push_to_user(author['id'], 'Scheduled post going live soon',
+                               f'Your scheduled {label}{where} goes live in {SCHEDULE_REMINDER_MIN} minutes.',
+                               {'type': 'schedule_reminder', 'id': s['id']})
+
+
+@app.get('/api/posts/scheduled')
+async def list_scheduled_posts(u: dict = Depends(get_current_user)):
+    await _publish_due_feed_posts()
+    return [_scheduled_post_out(s) async for s in
+            db.scheduled_posts.find({'author_id': u['id'], 'status': 'scheduled'}).sort('scheduled_at', 1)]
+
+
+@app.patch('/api/posts/scheduled/{sid}')
+async def edit_scheduled_post(sid: str, body: ScheduledPostEdit, u: dict = Depends(get_current_user)):
+    s = await db.scheduled_posts.find_one({'id': sid})
+    if not s or s['author_id'] != u['id'] or s.get('status') != 'scheduled':
+        raise HTTPException(404, 'Scheduled post not found')
+    upd: dict = {}
+    if body.text is not None:
+        t = body.text.strip()
+        if not t and not s.get('media_url'):
+            raise HTTPException(400, 'Empty post')
+        upd['text'] = t
+    if body.scheduled_at is not None:
+        try:
+            when = _parse_dt_utc(body.scheduled_at)
+        except Exception:
+            raise HTTPException(400, 'Invalid scheduled time')
+        if when <= datetime.now(timezone.utc) + timedelta(seconds=15):
+            raise HTTPException(400, 'Pick a time in the future')
+        upd['scheduled_at'] = when.isoformat()
+        upd['reminded'] = _reminder_too_late(when)
+    if upd:
+        await db.scheduled_posts.update_one({'id': sid}, {'$set': upd})
+    return {'ok': True, **{k: v for k, v in upd.items() if k != 'reminded'}}
+
+
+@app.delete('/api/posts/scheduled/{sid}')
+async def cancel_scheduled_post(sid: str, u: dict = Depends(get_current_user)):
+    r = await db.scheduled_posts.update_one({'id': sid, 'author_id': u['id'], 'status': 'scheduled'},
+                                            {'$set': {'status': 'canceled'}})
+    if not r.matched_count:
+        raise HTTPException(404, 'Scheduled post not found')
+    return {'ok': True}
 
 
 @app.post('/api/posts/{post_id}/tag/{decision}')

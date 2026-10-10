@@ -516,6 +516,19 @@ export const api = {
       body: j(b),
     }),
 
+  scheduledPosts: () => req('/posts/scheduled'),
+
+  editScheduledPost: (id: string, patch: { text?: string; scheduled_at?: string }) =>
+    req(`/posts/scheduled/${id}`, {
+      method: 'PATCH',
+      body: j(patch),
+    }),
+
+  cancelScheduledPost: (id: string) =>
+    req(`/posts/scheduled/${id}`, {
+      method: 'DELETE',
+    }),
+
   decideTag: (
     postId: string,
     decision: 'approve' | 'reject'

@@ -22,10 +22,16 @@ const dcEncoder = new TextEncoder()
 const dcDecoder = new TextDecoder()
 import { Avatar } from '../lib/ui'
 import { LIVE_CATEGORIES, categoryOf } from '../lib/liveCategories'
+import { Capacitor } from '@capacitor/core'
+import { useAuth } from '../lib/auth'
+import ObsStudioPanel from './stream/ObsStudioPanel'
+import StreamBoundary from './stream/StreamBoundary'
 import {
   X, Loader2, Heart, Send, Radio, Users, Users2, Globe2, Save, Lock,
-  Mic, MicOff, Video, VideoOff, RotateCcw,
+  Mic, MicOff, Video, VideoOff, RotateCcw, MonitorPlay, Camera,
 } from 'lucide-react'
+
+const isNativeApp = (() => { try { return Capacitor.isNativePlatform() } catch { return false } })()
 
 type Audience = 'public' | 'followers' | 'inner' | 'group'
 type Creds = { id: string; room: string; server_url: string; participant_token: string; is_host?: boolean; host?: any; title?: string; category?: string; audience?: string }
@@ -409,6 +415,10 @@ export default function LiveModal({
   const [groupId, setGroupId] = useState('')
   const [creds, setCreds] = useState<Creds | null>(null)
   const [err, setErr] = useState('')
+  const { user } = useAuth()
+  // OBS streaming is website-only and limited to approved streamers.
+  const canObs = mode === 'host' && !isNativeApp && !!(user as any)?.can_go_live
+  const [source, setSource] = useState<'camera' | 'obs'>('camera')
 
   useEffect(() => {
     if (mode === 'host') api.groups().then((r: any) => setGroups(r || [])).catch(() => {})
@@ -459,9 +469,36 @@ export default function LiveModal({
         <div className="h-full flex flex-col overflow-y-auto">
           <div className="w-full max-w-xl mx-auto p-5 pt-[calc(1.25rem+env(safe-area-inset-top))] pb-[calc(3rem+env(safe-area-inset-bottom))]">
             <div className="flex items-center gap-2 mb-6">
-              <span data-testid="live-setup-kind" className="neon-live flex items-center gap-1.5 bg-rose-600 text-white text-xs font-bold px-2 py-1 rounded-md"><Radio className="h-3.5 w-3.5" />{kind === 'story' ? 'LIVE STORY' : 'CONTENT STREAMING'}</span>
+              <span data-testid="live-setup-kind" className="neon-live flex items-center gap-1.5 bg-rose-600 text-white text-xs font-bold px-2 py-1 rounded-md"><Radio className="h-3.5 w-3.5" />{source === 'obs' ? 'CONTENT STREAMING' : kind === 'story' ? 'LIVE STORY' : 'CONTENT STREAMING'}</span>
               <button onClick={onClose} data-testid="live-setup-close" className="ml-auto h-9 w-9 grid place-items-center rounded-full bg-white/10 text-white"><X className="h-5 w-5" /></button>
             </div>
+
+            {canObs && (
+              <>
+                <div className="text-xs uppercase tracking-wide text-slate-400 mb-2">Stream from</div>
+                <div className="grid grid-cols-2 gap-2 mb-5" data-testid="live-source-picker">
+                  {([['camera', Camera, 'Camera', 'This device’s camera & mic'], ['obs', MonitorPlay, 'OBS Studio', 'Stream key for OBS']] as const).map(([k, Icon, label, hint]) => {
+                    const on = source === k
+                    return (
+                      <button key={k} onClick={() => setSource(k)} data-testid={`live-source-${k}`}
+                        className={`rounded-xl border p-3 text-left transition ${on ? 'border-brand bg-brand/10' : 'border-edge bg-panel hover:border-brand/40'}`}>
+                        <Icon className={`h-5 w-5 mb-1 ${on ? 'text-brand' : 'text-slate-400'}`} />
+                        <div className="font-semibold text-white text-sm">{label}</div>
+                        <div className="text-xs text-slate-500">{hint}</div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </>
+            )}
+
+            {source === 'obs' ? (
+              <div data-testid="live-obs-panel">
+                <StreamBoundary label="OBS streaming">
+                  <ObsStudioPanel />
+                </StreamBoundary>
+              </div>
+            ) : (<>
 
             <label className="text-xs uppercase tracking-wide text-slate-400 mb-1.5 block">Stream title</label>
             <input value={title} onChange={e => setTitle(e.target.value)} maxLength={120}
@@ -534,6 +571,7 @@ export default function LiveModal({
               className="mt-2 w-full py-3.5 rounded-xl bg-gradient-to-r from-rose-600 to-brand hover:brightness-110 text-white font-bold flex items-center justify-center gap-2 transition">
               <Radio className="h-5 w-5" /> Start live stream
             </button>
+            </>)}
           </div>
         </div>
       )}

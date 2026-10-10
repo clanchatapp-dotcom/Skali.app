@@ -1,0 +1,30 @@
+{
+  "summary": "Tested scheduled wall posts feature end-to-end (backend + frontend). Created /app/backend/tests/test_wall_scheduling.py with 7 pytest tests covering POST /api/wall/{handle} with future scheduled_at, GET /api/wall/{handle}/scheduled scoping to caller, PATCH /api/wall/scheduled/{id} (edit text + time, reject past time), DELETE for cancel, immediate posting path, past-time -> immediate publishing, and auto-publish worker (waited ~45s, scheduled post migrated from scheduled list to wall). All 7 backend tests PASSED. Frontend Playwright flow logged in as wallowner@test.com, dismissed onboarding/Comfort Zone dialogs, opened /u/owner Wall tab, toggled wall-schedule-toggle (datetime input appears), scheduled 'UI_TEST_scheduled_post' 2 min ahead -> appeared in wall-scheduled-list and NOT in main wall posts; edited via wall-scheduled-edit-btn-{id} / wall-scheduled-edit-save -> text updated; cancelled via wall-scheduled-cancel-{id} (confirm dialog accepted) -> removed from list; toggled schedule off and submitted immediate 'UI_TEST_immediate_post' -> appears on wall immediately. Submit button label correctly flips between 'Schedule post' and 'Post to wall'.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Profile tabs (MEDIA/WALL/BOARDS/AUDIO)", "issues": ["Tab buttons lack data-testid (e.g. tab-wall). Had to click via JS innerText match; recommend adding data-testid=\"tab-{name}\" for easier testability."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_wall_scheduling.py",
+    "/app/test_reports/pytest/wall_scheduling.xml"
+  ],
+  "action_items": [
+    "(Low) Add data-testid attributes to profile tab buttons (tab-media, tab-wall, tab-boards, tab-audio) for test automation."
+  ],
+  "critical_code_review_comments": [
+    "server.py get_wall and list_scheduled_wall both call _publish_due_wall_posts() on every request which issues a Mongo scan; acceptable for small volume but consider rate-limiting or relying on the 20s background worker as volume grows.",
+    "WallPost/WallScheduleEdit accept arbitrary string for scheduled_at; _parse_dt_utc centralizes parsing which is good. Minimum lead time of 15s is enforced consistently in create + edit.",
+    "post_wall silently falls through to immediate posting when scheduled_at is in the past (<= now+15s). This matches the choice 'past time -> immediate' but the API contract could be clearer in docs."
+  ],
+  "updated_files": ["/app/backend/tests/test_wall_scheduling.py"],
+  "success_rate": {"backend": "100% (7/7)", "frontend": "100% (schedule/list/edit/cancel/immediate all pass)"},
+  "test_credentials": "wallowner@test.com / Test1234 (handle owner), wallauthor@test.com / Test1234 (handle author)",
+  "seed_data_creation": "Test data created with TEST_ / UI_TEST_ prefixes and cleaned up at end of each pytest test; one 'UI_TEST_immediate_post' remains on owner wall from UI run (harmless).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Login flow: /login with email+password form (role=button name=Sign in). After login an onboarding wizard appears with 'Next' then a 'Your Comfort Zone' screen with 'Enter Skali' button - dismiss both. Profile tabs are uppercase-styled; use JS innerText match or add data-testid. Wall feature test IDs: wall-textarea, wall-schedule-toggle, wall-schedule-datetime, wall-submit-btn, wall-scheduled-list, wall-scheduled-item-{id}, wall-scheduled-edit-btn-{id}, wall-scheduled-cancel-{id}, wall-scheduled-edit-text, wall-scheduled-edit-datetime, wall-scheduled-edit-save."
+}

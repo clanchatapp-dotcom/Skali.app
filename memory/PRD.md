@@ -1,5 +1,19 @@
 # Skali — PRD / Working Memory
 
+## [2026-06] Import (zip) + Scheduled Wall Posts — tested 100% (iteration_32)
+### Problem statement
+"DO NOT DELETE OR MOVE A SINGLE THING LITERALLY NOTHING. JUST EXTRACT EVERYTHING FROM THE ZIP AND ADD THE ABILITY TO SCHEDULE POSTS TO THE WALL"
+### Import
+- Zip extracted into /app as-is. Original zip kept at /app/_original_upload.zip. The previous template files were backed up to /app/_template_backup. The zip's .emergent/emergent.yml was kept at /app/_zip_emergent (the platform file was left in place).
+- Preview backend/.env: SUPABASE_JWT_SECRET + DM_ENC_KEY (random local values).
+### Scheduled wall posts
+- POST /api/wall/{handle} accepts an optional scheduled_at. A time in the future stores the post with status 'scheduled', hidden from the wall.
+- A background worker runs every 20s and also on wall reads. It publishes due posts (created_at = scheduled_at) and sends the wall activity.
+- GET /api/wall/{handle}/scheduled returns the caller's own scheduled posts. PATCH /api/wall/scheduled/{id} edits the text or time. DELETE /api/wall/{id} cancels.
+- UI (src/pages/Profile.tsx WallTab): a Schedule toggle with a datetime picker, plus a "Scheduled" list (only you can see it) with edit and cancel.
+### Backlog
+- P2: Allow scheduling feed posts (not just the wall); show a scheduled count on the profile.
+
 ## [2026-10-08] Support claim + profile followers fix — tested 100% (iteration_31)
 - POST /api/admin/support/claim/{handle} {claim} stores support_status.assigned = {id, handle, display_name, at}. Threads and thread detail return `assigned`. The list shows "Handled by you/#handle"; the modal has Claim / Take over (with a confirm) / Release. All of these go to the audit log.
 - Bug fix: the Followers/Following stat blocks on your own profile now open /connections?tab=followers|following. They're disabled on other people's profiles because the counts are owner-only.

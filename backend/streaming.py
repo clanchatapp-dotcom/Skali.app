@@ -372,17 +372,22 @@ def build_router() -> APIRouter:
 
     @r.get('/ingress')
     async def get_ingress(u: dict = Depends(auth)):
-        out = {'configured': lk_configured(), 'vod_enabled': vod_enabled(), 'ingress': None, 'live': None}
+        out = {'configured': lk_configured(), 'vod_enabled': vod_enabled(), 'ingress': None, 'live': None,
+               'settings': await _get_settings(u['id']), 'error': ''}
         if not out['configured']:
             return out
-        out['ingress'] = _ingress_out(await _ingress_info(u['id']))
+        try:
+            out['ingress'] = _ingress_out(await _ingress_info(u['id']))
+        except Exception as e:
+            log.warning('get ingress failed: %s', e)
+            out['error'] = f'Could not reach LiveKit: {getattr(e, "message", None) or e}. Check LIVEKIT_URL / API key / secret on the backend.'
+            return out
         live = await _live_doc(u['id'])
         if not live and out['ingress'] and out['ingress']['status'] == 'publishing':
             live = await _maybe_auto_start(u)  # Twitch-style: OBS signal -> live
         elif out['ingress'] and out['ingress']['status'] != 'publishing':
             await db.stream_settings.update_one({'user_id': u['id']}, {'$set': {'hold': False}})
         out['live'] = srv._live_out(live) if live else None
-        out['settings'] = await _get_settings(u['id'])
         return out
 
     @r.get('/settings')

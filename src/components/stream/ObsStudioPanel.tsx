@@ -111,7 +111,7 @@ export default function ObsStudioPanel() {
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
 
-  const load = useCallback(() => api.streamIngress().then(setD).catch((e: any) => setErr(e.message)), [])
+  const load = useCallback(() => api.streamIngress().then((x: any) => { setD(x); setErr('') }).catch((e: any) => setErr(e.message)), [])
   useEffect(() => {
     load()
     const t = setInterval(load, 5000)
@@ -141,11 +141,18 @@ export default function ObsStudioPanel() {
 
       <div className="p-4 space-y-4">
         {!d ? (
-          <div className="py-6 grid place-items-center"><Loader2 className="h-5 w-5 animate-spin text-slate-500" /></div>
+          err ? (
+            <div className="space-y-3" data-testid="obs-load-error">
+              <p className="text-sm text-rose-300">Couldn't load your stream setup: {err}</p>
+              <button onClick={() => { setErr(''); load() }} data-testid="obs-retry-btn"
+                className="px-5 py-2.5 rounded-full border border-edge text-sm font-semibold hover:bg-white/5">Retry</button>
+            </div>
+          ) : <div className="py-6 grid place-items-center"><Loader2 className="h-5 w-5 animate-spin text-slate-500" /></div>
         ) : !d.configured ? (
           <p className="text-sm text-slate-400" data-testid="obs-not-configured">Streaming server isn't configured yet (LiveKit keys missing on the backend).</p>
         ) : !ing ? (
           <div className="flex flex-wrap items-center gap-3">
+            {d.error && <p className="w-full text-sm text-rose-300" data-testid="obs-livekit-error">{d.error}</p>}
             <p className="text-sm text-slate-400 flex-1 min-w-[200px]">Get a personal RTMP server URL and stream key to broadcast from OBS.</p>
             <button onClick={() => run('create', api.streamCreateIngress)} disabled={!!busy} data-testid="obs-create-key-btn"
               className="px-5 py-2.5 rounded-full bg-brand text-white font-semibold text-sm disabled:opacity-50">

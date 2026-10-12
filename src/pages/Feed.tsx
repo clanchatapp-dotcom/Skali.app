@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import LiveNowBanner from '../components/LiveNowBanner'
+import { isNative } from '../lib/nativeGoogle'
 import { api } from '../lib/api'
 import { TIER, TierKey } from '../lib/ui'
 import PostCard from '../components/PostCard'
@@ -477,7 +478,7 @@ export default function Feed() {
         <div className="mt-3">
           <StoryRail />
         </div>
-        <LiveNowBanner />
+        {!isNative() && <LiveNowBanner />}
       </div>
 
       <Composer onPosted={load} />

@@ -5,6 +5,7 @@ import { Avatar } from '../lib/ui'
 import { INTERESTS } from '../lib/interests'
 import Choices from './Choices'
 import FindStreamers from '../components/FindStreamers'
+import { isNative } from '../lib/nativeGoogle'
 import { Hash, AtSign, Search as SearchIcon, Compass, Sparkles, Radio } from 'lucide-react'
 
 export default function Search() {
@@ -72,7 +73,7 @@ export default function Search() {
           >
             <Sparkles className="h-4 w-4" /> Choices
           </button>
-          <button
+          {!isNative() && <button
             onClick={() => setTab('streamers')}
             data-testid="find-tab-streamers"
             className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-semibold transition ${
@@ -80,7 +81,7 @@ export default function Search() {
             }`}
           >
             <Radio className="h-4 w-4" /> Streamers
-          </button>
+          </button>}
         </div>
 
         {tab === 'discover' && (
@@ -104,7 +105,7 @@ export default function Search() {
         </div>
       )}
 
-      {tab === 'streamers' && <FindStreamers />}
+      {tab === 'streamers' && !isNative() && <FindStreamers />}
 
       {/* DISCOVER TAB — results only appear once you type */}
       {tab === 'discover' && raw && (

@@ -5,6 +5,7 @@ import { LIVE_CATEGORIES } from '../../lib/liveCategories'
 import CopyField from './CopyField'
 import StreamMods from './StreamMods'
 import StreamVods from './StreamVods'
+import ConnectObsModal from './ConnectObsModal'
 import { Loader2, MonitorUp, RefreshCw, Radio, Square, ExternalLink, Globe2, Users, Users2, AlertTriangle } from 'lucide-react'
 
 const SIGNAL: Record<string, { label: string; cls: string }> = {
@@ -34,7 +35,7 @@ function StatusPills({ signal, live }: { signal: string; live: boolean }) {
   )
 }
 
-function GoLiveForm({ ready, busy, onStart }: { ready: boolean; busy: boolean; onStart: (b: any) => void }) {
+function GoLiveForm({ busy, onStart }: { busy: boolean; onStart: (b: any) => void }) {
   const [title, setTitle] = useState('')
   const [category, setCategory] = useState('just_chatting')
   const [audience, setAudience] = useState('public')
@@ -57,11 +58,10 @@ function GoLiveForm({ ready, busy, onStart }: { ready: boolean; busy: boolean; o
           </button>
         ))}
       </div>
-      <button onClick={() => onStart({ title, category, audience })} disabled={!ready || busy} data-testid="obs-golive-btn"
+      <button onClick={() => onStart({ title, category, audience })} disabled={busy} data-testid="obs-golive-btn"
         className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-full bg-gradient-to-r from-rose-600 to-brand text-white font-bold text-sm disabled:opacity-40 active:scale-95 transition-transform">
         {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radio className="h-4 w-4" />} Go live with OBS
       </button>
-      {!ready && <p className="text-xs text-slate-500" data-testid="obs-waiting-hint">Click "Start Streaming" in OBS — Go live unlocks once we receive your video.</p>}
     </div>
   )
 }
@@ -71,6 +71,7 @@ export default function ObsStudioPanel() {
   const [d, setD] = useState<any>(null)
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
+  const [connect, setConnect] = useState<any>(null)
 
   const load = useCallback(() => api.streamIngress().then(setD).catch((e: any) => setErr(e.message)), [])
   useEffect(() => {
@@ -143,12 +144,11 @@ export default function ObsStudioPanel() {
                   <Square className="h-3.5 w-3.5" /> {busy === 'end' ? 'Ending…' : 'End stream'}
                 </button>
               </div>
-            ) : (
-              <GoLiveForm ready={ing.status === 'publishing'} busy={busy === 'start'}
-                onStart={b => run('start', async () => { const s = await api.streamStart(b); nav(`/watch/${s.id}`) })} />
-            )}
+            ) : null}
           </>
         )}
+
+        {d && !live && <GoLiveForm busy={busy === 'start'} onStart={setConnect} />}
 
         {d?.configured && !d.vod_enabled && (
           <p className="text-xs text-amber-300/90 flex items-start gap-1.5" data-testid="obs-vod-disabled">
@@ -157,6 +157,11 @@ export default function ObsStudioPanel() {
         )}
         {err && <p className="text-sm text-rose-400" data-testid="obs-error">{err}</p>}
       </div>
+
+      {connect && (
+        <ConnectObsModal busy={busy === 'start'} error={err} onClose={() => { setConnect(null); setErr('') }}
+          onStart={() => run('start', async () => { const s = await api.streamStart(connect); setConnect(null); nav(`/watch/${s.id}`) })} />
+      )}
 
       <div className="grid md:grid-cols-2 border-t border-edge">
         <StreamMods />

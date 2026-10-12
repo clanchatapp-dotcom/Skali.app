@@ -239,6 +239,7 @@ export const api = {
   streamIngress: () => req('/stream/ingress'),
   streamCreateIngress: () => req('/stream/ingress', { method: 'POST' }),
   streamResetIngress: () => req('/stream/ingress/reset', { method: 'POST' }),
+  streamObsConnect: () => req('/stream/obs-connect'),
   streamStart: (b: { title?: string; category?: string; audience?: string }) =>
     req('/stream/start', { method: 'POST', body: j(b) }),
   streamEnd: () => req('/stream/end', { method: 'POST' }),

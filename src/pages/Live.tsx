@@ -128,6 +128,16 @@ export default function Live() {
   // Streaming is website-only; the mobile app is for watching.
   const canGoLive = allowed && !isNative
 
+  if (isNative) return (
+    <div className="p-6 grid place-items-center min-h-full" data-testid="live-web-only-note">
+      <div className="max-w-sm text-center rounded-2xl border border-edge bg-panel p-6">
+        <Lock className="h-6 w-6 text-slate-400 mx-auto mb-2" />
+        <p className="font-semibold text-white">Content Streaming is on the website</p>
+        <p className="text-sm text-slate-400 mt-1">Open skaliapp.com in a browser to watch or stream. Use Live Story here in the app.</p>
+      </div>
+    </div>
+  )
+
   return (
     <div className="min-h-full">
       <div className="sticky top-0 z-20 bg-ink/85 backdrop-blur border-b border-edge px-4 md:px-6 pt-[calc(1rem+env(safe-area-inset-top))] pb-4">

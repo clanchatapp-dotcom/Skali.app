@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { isNative } from '../lib/nativeGoogle'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { Avatar, timeAgo, Linkify } from '../lib/ui'
@@ -232,7 +233,7 @@ export default function Profile() {
               <div className="text-[10px] uppercase tracking-[0.25em] text-slate-500 font-semibold text-center mb-1.5">Creator Studio</div>
               <div className="studio-tiles">
                 <AddStoryButton onAdded={load} />
-                {p.can_go_live && (
+                {p.can_go_live && !isNative() && (
                 <button onClick={() => nav('/live')} data-testid="creator-studio-live"
                   className="px-4 py-1.5 rounded-full border border-rose-500/40 bg-rose-500/10 text-rose-300 text-sm font-semibold flex items-center gap-1.5 hover:bg-rose-500/20 transition-colors">
                   <Radio className="h-4 w-4" /> Content Streaming

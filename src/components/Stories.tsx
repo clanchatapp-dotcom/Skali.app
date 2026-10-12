@@ -7,6 +7,9 @@ import { useAuth } from '../lib/auth'
 import { Plus, X, Loader2, Trash2, Eye, Radio, Image as ImageIcon, PlayCircle } from 'lucide-react'
 import LiveModal from './LiveModal'
 import MediaLightbox from './MediaLightbox'
+import { Capacitor } from '@capacitor/core'
+
+const isNative = (() => { try { return Capacitor.isNativePlatform() } catch { return false } })()
 
 export type StoryItem = {
   id: string; media_url: string; media_type: string; caption: string
@@ -215,7 +218,8 @@ export function StoryRail() {
   }, [loadLive])
   const myHandle = (user as any)?.handle
   // Live Stories (everyone) show as story rings; Content Streams (creators) live behind the Watch circle.
-  const liveStories = live.filter(l => l.kind === 'story')
+  // Live Story is mobile-app only; Content Streaming is website only.
+  const liveStories = isNative ? live.filter(l => l.kind === 'story') : []
   const streamsLive = live.filter(l => l.kind !== 'story' && l.host?.handle !== myHandle)
   const myLiveStory = liveStories.find(l => l.host?.handle === myHandle)
   const othersLiveStories = liveStories.filter(l => l.host?.handle !== myHandle)
@@ -248,14 +252,14 @@ export function StoryRail() {
       <input ref={fileRef} type="file" accept="image/*,video/*" hidden onChange={onFile} />
       <div className="flex gap-4 overflow-x-auto no-scrollbar">
         {/* Watch Streams — Content Streaming discovery (Find → Streamers) */}
-        <button data-testid="watch-live-btn" onClick={() => nav('/search?tab=streamers')} className="shrink-0 flex flex-col items-center gap-1.5 w-16">
+        {!isNative && <button data-testid="watch-live-btn" onClick={() => nav('/search?tab=streamers')} className="shrink-0 flex flex-col items-center gap-1.5 w-16">
           <div className={`rounded-full p-[2.5px] ${streamsLive.length ? 'bg-rose-600' : 'bg-edge'}`}>
             <div className="rounded-full p-[2px] bg-ink">
               <div className="h-14 w-14 rounded-full bg-rose-500/15 grid place-items-center"><PlayCircle className="h-6 w-6 text-rose-400" /></div>
             </div>
           </div>
           <span className="text-[11px] text-rose-300 font-semibold truncate max-w-full">Watch Streams</span>
-        </button>
+        </button>}
 
         {/* Your live story (while you are live) */}
         {myLiveStory && (
@@ -335,10 +339,12 @@ export function StoryRail() {
               className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl hover:bg-white/5 text-left text-white">
               <ImageIcon className="h-5 w-5 text-brand" /> Photo or video story
             </button>
-            <button onClick={() => { setChooser(false); setLiveOpen({ mode: 'host' }) }} data-testid="story-chooser-live"
-              className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl hover:bg-white/5 text-left text-white">
-              <Radio className="h-5 w-5 text-rose-400" /> Live Story
-            </button>
+            {isNative && (
+              <button onClick={() => { setChooser(false); setLiveOpen({ mode: 'host' }) }} data-testid="story-chooser-live"
+                className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl hover:bg-white/5 text-left text-white">
+                <Radio className="h-5 w-5 text-rose-400" /> Live Story
+              </button>
+            )}
             <button onClick={() => setChooser(false)} data-testid="story-chooser-cancel"
               className="w-full px-4 py-3 rounded-xl text-slate-400 hover:bg-white/5 text-center">Cancel</button>
           </div>

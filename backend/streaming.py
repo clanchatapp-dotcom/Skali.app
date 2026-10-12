@@ -190,6 +190,26 @@ async def _ingress_info(uid: str):
     return res.items[0]
 
 
+def _obs_fallback() -> dict:
+    return {'server_url': os.environ.get('LIVEKIT_OBS_RTMP_URL', ''),
+            'stream_key': os.environ.get('LIVEKIT_OBS_STREAM_KEY', ''),
+            'ingress_id': os.environ.get('LIVEKIT_OBS_INGRESS_ID', ''),
+            'ingress_name': os.environ.get('LIVEKIT_OBS_INGRESS_NAME', ''),
+            'room': os.environ.get('LIVEKIT_OBS_ROOM', '')}
+
+
+async def _fallback_info():
+    iid = _obs_fallback()['ingress_id']
+    if not iid or not lk_configured():
+        return None
+    res = await _lk(lambda c: c.ingress.list_ingress(lk_api.ListIngressRequest(ingress_id=iid)))
+    return res.items[0] if res.items else None
+
+
+async def _host_ingress(uid: str):
+    return await _ingress_info(uid) or await _fallback_info()
+
+
 def _ingress_out(info) -> Optional[dict]:
     if info is None:
         return None
@@ -326,12 +346,25 @@ def build_router() -> APIRouter:
             await db.stream_ingress.delete_one({'user_id': u['id']})
         return _ingress_out(await _create_ingress(u))
 
+    @r.get('/obs-connect')
+    async def obs_connect(u: dict = Depends(auth)):
+        srv.require_can_go_live(u)
+        out = {**_obs_fallback(), 'configured': lk_configured(), 'status': 'unknown', 'error': ''}
+        try:
+            info = await _fallback_info()
+            if info:
+                o = _ingress_out(info)
+                out.update(status=o['status'], error=o['error'])
+        except Exception as e:
+            log.warning('obs-connect status failed: %s', e)
+        return out
+
     @r.post('/start')
     async def start(body: StreamStart, u: dict = Depends(auth)):
         srv.require_can_go_live(u)
-        info = await _ingress_info(u['id'])
+        info = await _host_ingress(u['id'])
         if not info:
-            raise HTTPException(400, 'Create your stream key first.')
+            raise HTTPException(400, 'No OBS ingress available. Create your stream key first.')
         if _ingress_out(info)['status'] != 'publishing':
             raise HTTPException(409, 'We are not receiving video from OBS yet. Click "Start Streaming" in OBS, then try again.')
         now = _now()
@@ -340,7 +373,7 @@ def build_router() -> APIRouter:
         live_id = uuid.uuid4().hex[:12]
         audience = body.audience if body.audience in OBS_AUDIENCES else 'public'
         category = body.category if body.category in srv.LIVE_CATEGORY_KEYS else 'just_chatting'
-        doc = {'id': live_id, 'room': room_for(u['id']), 'host_id': u['id'], 'source': 'obs',
+        doc = {'id': live_id, 'room': info.room_name or room_for(u['id']), 'host_id': u['id'], 'source': 'obs',
                'host': {'handle': u['handle'], 'display_name': u['display_name'],
                         'avatar_url': u.get('avatar_url'), 'account_nsfw': srv.is_adult_account(u),
                         'role': srv.effective_role(u)},
@@ -556,7 +589,7 @@ async def _sweep_sessions():
     now = _now()
     async for s in srv.db.live_streams.find({'status': 'live', 'source': 'obs'}, {'_id': 0}):
         try:
-            info = await _ingress_info(s['host_id'])
+            info = await _host_ingress(s['host_id'])
             publishing = bool(info) and _ingress_out(info)['status'] == 'publishing'
             if publishing:
                 res = await _lk(lambda c: c.room.list_participants(lk_api.ListParticipantsRequest(room=s['room'])))

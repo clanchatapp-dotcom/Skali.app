@@ -1,0 +1,23 @@
+{
+  "summary": "Verified both reported bugs are fixed. Backend: 3/3 pytest tests pass against localhost:8001 — (a) POST /api/live/start returns 200 with dummy LIVEKIT_* keys (regression gone), (b) followers-audience live notifies approved followers via Activity (type='live', actor=host) and does NOT self-notify host or notify non-followers, (c) inner-audience live notifies only inner-circle members, not plain followers. Frontend: on 414x896 mobile viewport, after registering/logging in to the preview URL, the Go Live modal opens via React portal (z-index 90) above the bottom nav (z-index 40). The data-testid='live-start-btn' button bounding box is {x:20,y:824,w:374,h:52} — fully within viewport (bottom=876 < 896) and NOT overlapped: document.elementFromPoint at the button center returns the live-start-btn element itself. Did not click Start (per instructions) to avoid LiveKit/camera.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_live_notifications.py",
+    "/app/test_reports/pytest/live_notifications.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is 5867 lines — still well over the 700-line split guideline; splitting into routers (auth, live, follow, inner, activity) is overdue.",
+    "_notify_live swallows exceptions per-target silently (logs at warning). Consider adding a counter/metric so silently-failed activity writes are observable.",
+    "Push notifications are best-effort no-ops without FCM creds (acknowledged in the task); the Activity row is the authoritative signal — current implementation correctly treats it that way."
+  ],
+  "updated_files": ["/app/backend/tests/test_live_notifications.py", "/app/test_reports/iteration_15.json"],
+  "success_rate": {"backend": "100% (3/3)", "frontend": "100% (Go Live modal button verified above bottom nav on 414x896)"},
+  "test_credentials": "Fresh accounts registered per-test; preview UI account used only transiently: skalitest<ts>@example.com / password123.",
+  "seed_data_creation": "Each backend test registers its own TEST_-prefixed accounts (host + follower(s) + inner member). No persistent seed data created.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "The live-notification regression (issue 2) and Go Live modal portal/z-index fix (issue 1) are both verified. If retesting, run `pytest /app/backend/tests/test_live_notifications.py -v` against localhost:8001 and open the preview URL on a 414x896 viewport, log in and click [data-testid=go-live-btn] — the [data-testid=live-start-btn] must be fully visible above the bottom nav. The web frontend talks to the Render backend for auth (not localhost) — register fresh UI accounts for frontend tests. Preview URL used for test: https://3a1419f6-f326-49d6-9e9c-189bca10116f.preview.emergentagent.com.",
+  "rca of the issue": "Issue 1 RCA (fixed): LiveModal previously rendered inside the Feed subtree, so it inherited the Feed's stacking context and sat under the fixed bottom nav. Fix: LiveModal.tsx now wraps its root in createPortal(..., document.body) with className='fixed inset-0 z-[90] ...', escaping the parent stacking context and layering above nav (z-40). Verified via elementFromPoint hit-test at the Start button center returning the button itself. Issue 2 RCA (fixed): _notify_live previously only did a websocket broadcast + optional push; it did not persist an Activity row, so offline followers saw nothing. Fix: _notify_live now calls add_activity(target_id, 'live', host_user, 'is live now...') for each approved follower (audience=followers) or inner-member (audience=inner), excluding the host themselves. 'live' was added to NOTIF_KEYS and ACTIVITY_TYPE_TO_NOTIF so GET /api/activity surfaces it. Verified by the 3 pytest cases."
+}

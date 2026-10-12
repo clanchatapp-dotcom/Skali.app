@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  App-level override of Capacitor's capacitor_bridge_layout_main.xml (the layout
+  BridgeActivity actually inflates). Swaps the default CapacitorWebView for
+  StickerWebView so the app can receive keyboard stickers / GIFs via Android's
+  CommitContent API. The id MUST stay @+id/webview for Capacitor's bridge.
+-->
+<androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    tools:context="com.getcapacitor.BridgeActivity"
+    >
+
+    <app.skali.mobile.StickerWebView
+        android:id="@+id/webview"
+        android:layout_width="fill_parent"
+        android:layout_height="fill_parent" />
+
+</androidx.coordinatorlayout.widget.CoordinatorLayout>

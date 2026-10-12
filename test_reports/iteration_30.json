@@ -1,0 +1,48 @@
+{
+  "summary": "Iteration 30 — tested the unified Skali Team support inbox + Feed 'is streaming now' banner (both backend + frontend, mobile 390x860, preview DB test_database). All 11 backend tests pass; all UI acceptance points pass.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "backend_tests_executed": [
+    "TestSupportInbox::test_bot_me_is_support_bot — /api/me returns is_support_bot=true, handle=skali_support",
+    "TestSupportInbox::test_support_unread_bot_ok — bot gets 200 on /api/admin/support/unread",
+    "TestSupportInbox::test_support_threads_bot_ok — threads sorted unread-first (all unread>0 before any unread==0)",
+    "TestSupportInbox::test_support_unread_normal_user_forbidden — viewer gets 403 on /unread",
+    "TestSupportInbox::test_support_threads_normal_user_forbidden — viewer gets 403 on /threads",
+    "TestSupportInbox::test_support_flow_viewer_msg_then_bot_reply — viewer DM to #skali_support reaches bot inbox; opening thread marks viewer's messages read (unread drops); bot reply via /api/admin/support/reply/viewer appears in viewer's DM thread",
+    "TestLiveAlertedNow::test_alerted_now_viewer_sees_fake_stream — preview-fake-stream present with watch_url=/watch/preview-fake-stream",
+    "TestLiveAlertedNow::test_alerted_now_excludes_own_stream — creator does not see own stream",
+    "TestLiveAlertedNow::test_alert_off_hides_banner — turning alert OFF removes it from /alerted-now, turning ON restores it",
+    "TestLiveAlertedNow::test_alerted_now_never_includes_stories — kind='story' never returned",
+    "TestModeratorAccess::test_moderator_can_access_support — tester role temp-set to 'moderator' gets 200 on both /unread and /threads, then reset to null"
+  ],
+  "frontend_checks_executed": [
+    "Bot login skaliappteam@gmail.com / Skaliappteam_1 → no DOB gate (redirects to /)",
+    "/admin as bot: heading='Support inbox', only admin-tab-support present (no other admin-tab-* tabs), admin-support-unread-badge visible with count=1, no stats grid",
+    "support-unread-heading + support-earlier-heading present; two threads listed (thisismajorofficial unread, viewer earlier after thread was marked read by prior fetch)",
+    "Opening a thread shows support-thread-viewer; reply composer present",
+    "Settings → Account tab shows settings-admin-link labelled 'Support inbox' (visible for bot)",
+    "Viewer feed shows feed-live-now-banner with text '#thisismajorofficial is streaming now · Late night build session'",
+    "feed-live-now-watch click navigates to /watch/preview-fake-stream",
+    "feed-live-now-dismiss hides banner for the session",
+    "Find → Streamers shows streamer-alert-thisismajorofficial (aria-pressed=true by default for follower); toggling off hides the Feed banner on reload; toggling back on restores aria-pressed=true (cleanup)"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_support_and_live_banner.py",
+    "/app/test_reports/pytest/iter30.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Two frontend trees exist in repo: /app/src (actual compiled source, used by build) and /app/frontend/src (older legacy copy that lacks support-inbox / LiveNowBanner changes). The review request's files_of_reference use /app/src/... which is correct. The /app/frontend/src tree is stale and risks confusing future agents — recommend removing or clearly marking it as legacy.",
+    "server.py is 6111 lines — well past the 700-line guideline. Consider extracting support-bot / admin-support endpoints into their own module like live_alerts.py."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_support_and_live_banner.py (new)"
+  ],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "100% (all acceptance checks)"},
+  "test_credentials": "Bot: skaliappteam@gmail.com / Skaliappteam_1 (works in preview DB — auth row maps to skali-support-bot). tester@skali.test / Test1234!. viewer@skali.test / Test1234!.",
+  "seed_data_creation": "Reused the existing seeded 'preview-fake-stream' (status=live, source=obs, host=thisismajorofficial). Test added TEST_support_hello / TEST_support_reply DM pair between viewer ↔ bot (harmless, prefixed TEST_).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Preview-DB-only testing. The Skali Team bot has auth row email=skaliappteam@gmail.com → user_id=skali-support-bot. The settings-admin-link lives in the Account tab of /settings (default tab is Profile — click Account first). Streamer alert bell is reached via /search → Streamers tab, selector data-testid=streamer-alert-{handle}. preview-fake-stream is a long-lived seeded live_streams doc; leave it in place.",
+  "rca of the issue": "n/a — no bugs found. One initial test failure was in the test itself: the first version assumed unread would decrease by exactly 1 after opening a thread, but support_thread marks *all* of that user's inbound messages as read, so the drop can be >1. Fixed assertion to < unread_before."
+}

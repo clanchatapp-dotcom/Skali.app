@@ -1,0 +1,44 @@
+{
+  "summary": "Backend-only validation of Skali Block 1 (Launch-safe foundation) hardening. All 22 pytest cases pass on the external preview URL. Covered: (a) rebrand — GET /api/ returns service='skali' and GET /api/health/db returns db_name='skali'; (b) auth — register requires 13+ DOB, login works, seeded super-admin admin@skaliapp.com / SkaliLocalDev!2026 logs in and /api/me matches; (c) board tier access — stranger can read a 'public' board (200) but gets 403 on 'followers'/'inner' boards, and those restricted boards are omitted from GET /api/boards/{owner_handle} listings; (d) CSAM step-up — /api/admin/csam is 403 without X-Step-Up, 403 with wrong X-Step-Up, 200 with the correct secret; a non-admin user WITH the correct secret still gets 403; escalate requires step-up (403 without, 404 with valid header for fake id proving the guard passed); (e) DM review + silent investigation — /api/admin/dms/{handle} and /api/admin/investigate/{handle} return 400 when legal_basis is missing/<8 chars, 403 when the subject is not flagged/watchlisted, and 200 after flagging with a valid legal_basis; (f) audit trail — GET /api/admin/audit contains 'silent_investigation' and 'view_dms' entries with the subject handle after successful sensitive access; (g) regression — /api/me, /api/feed?scope=public, and /api/report all work. Rate limiter (10 sensitive opens / 5 min) verified indirectly — the shared session admin bucket is exercised near the limit and the tests are tuned/serialized to stay within it.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "sensitive_access_guard (dependency order)",
+        "issue": "The in-memory rate-limit counter is decremented BEFORE _verify_step_up runs, so failed step-up attempts (wrong / missing header) also consume the admin's 10/5min budget. That is intentional-looking (helps thwart brute-forcing the secret), but note that a legitimate admin who mistypes the secret twice and then hits eight legitimate sensitive endpoints will trip the limit. Consider only counting successful step-ups or splitting into two counters (attempt-limit vs open-limit). No test failure — informational."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/test_block1_hardening.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: consider only decrementing the sensitive-access rate limiter on successful step-up (or split the buckets) so that a few mistyped-secret attempts do not eat into a legitimate admin's 10-open budget.",
+    "OPTIONAL: DM-review endpoint currently requires prof.flagged (watchlisted is NOT accepted); the silent-investigation endpoint accepts either. If parity is desired for the DM review path, allow watchlisted too — otherwise, document the difference."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 3660 lines — well over the 700-line guideline. Recommend splitting into routers (auth, boards, dms, admin, safety) in a follow-up refactor.",
+    "sensitive_access_guard correctly runs require_full_admin FIRST (via FastAPI Depends), so a non-owner/non-co-admin cannot even reach the step-up check — validated by test_csam_non_admin_with_correct_header_still_forbidden.",
+    "CSAM_STEPUP_SECRET_HASH is compared with hmac.compare_digest — good (constant-time). Fail-closed when unset (503) — good.",
+    "audit(admin, 'silent_investigation'/'view_dms', handle, ...) is written on every successful sensitive access — verified by inspecting /api/admin/audit after test runs.",
+    "Board tier access: can_read_board correctly awaits is_admin_user_id and enforces adult/minor barrier + block-between before tier checks."
+  ],
+  "updated_files": [
+    "/app/backend/tests/conftest.py (created)",
+    "/app/backend/tests/test_block1_hardening.py (created)"
+  ],
+  "success_rate": {"backend": "100% (22/22)", "frontend": "N/A (backend-only run)"},
+  "seed_data_creation": "Ephemeral users created per test run with 'test_' email prefix: owner, stranger, target_user (later flagged for DM/investigate tests). Two public/followers/inner boards created under owner. All data lives in the 'skali' Mongo database and is safe to leave.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The pytest file at /app/backend/tests/test_block1_hardening.py MUST be run with '-n 0' (serial) because the sensitive-access rate limit is 10 opens / 5 minutes per admin and the shared super_admin fixture exercises ~10 sensitive endpoints in one session. Running under the default '-n 2 --dist loadscope' from /app/backend/pytest.ini causes the parallel workers to overlap into a fresh 5-min window and trip 429s. If more sensitive-access tests are added, either restart the backend at the start of the class ('sudo supervisorctl restart backend') to clear the in-memory bucket, or create a second admin (co-admin) fixture and route half the calls through it. Step-up secret: X-Step-Up: fEFGyT51RQ06GTkezQeZ-9lMjCYNyjTv. Super-admin: admin@skaliapp.com / SkaliLocalDev!2026.",
+  "rca_of_issue": "N/A — no functional bugs found. During test authoring, three tests initially 429'd because the sensitive-access rate limiter counts every attempt (including failed step-ups). Fix was on the TEST side: consolidate to <=10 sensitive_access_guard invocations per admin per run and force serial execution ('-n 0'). No product code changed."
+}

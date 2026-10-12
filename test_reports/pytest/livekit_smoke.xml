@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="1" failures="0" skipped="0" tests="3" time="1.248" timestamp="2026-10-03T13:54:37.717175+00:00" hostname="agent-env-3a1419f6-f326-49d6-9e9c-189bca10116f"><testcase classname="tests.test_livekit_smoke" name="test_import_server_module" time="0.517" /><testcase classname="tests.test_livekit_smoke" name="test_health_endpoint" time="0.005" /><testcase classname="tests.test_livekit_smoke" name="test_livekit_token_route_reachable" time="0.047"><error message="failed on setup with &quot;AssertionError: register failed: 500 Internal Server Error&#10;assert 500 == 200&#10; +  where 500 = &lt;Response [500]&gt;.status_code&quot;">backend/tests/test_livekit_smoke.py:29: in auth_token
+    assert r.status_code == 200, f"register failed: {r.status_code} {r.text}"
+E   AssertionError: register failed: 500 Internal Server Error
+E   assert 500 == 200
+E    +  where 500 = &lt;Response [500]&gt;.status_code</error></testcase></testsuite></testsuites>

@@ -1,0 +1,32 @@
+{
+  "summary": "Verified the livekit dependency/startup fix on the local backend (localhost:8001). The backend boots cleanly, `from livekit import api as lk_api` resolves, GET /api/ returns 200, and POST /api/livekit/token is routable (returns 401 for missing/invalid auth — no ImportError, no 502). The livekit regression is NOT occurring. Register/login could not be exercised end-to-end due to an UNRELATED missing env var: SUPABASE_JWT_SECRET is not set in /app/backend/.env, causing `jwt.exceptions.InvalidKeyError: HMAC key must not be empty.` from mint_token() at server.py:989. This is a pre-existing env/config gap, not a dependency regression.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "/api/auth/register and /api/auth/login", "issue": "500 Internal Server Error — jwt.exceptions.InvalidKeyError: 'HMAC key must not be empty.' because SUPABASE_JWT_SECRET env var is not set. server.py:47 reads it with default ''; mint_token() then fails to sign HS256. Also triggers downstream 'AESGCM key must be 128, 192, or 256 bits' warning for welcome DM encryption.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "startup", "issue": "FastAPI deprecation warnings for @app.on_event('startup') (server.py:889 and 5053) — should migrate to lifespan handlers."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_livekit_smoke.py",
+    "/app/test_reports/pytest/livekit_smoke.xml"
+  ],
+  "action_items": [
+    "Add SUPABASE_JWT_SECRET (and ideally an AES/encryption key used by the welcome-DM path) to /app/backend/.env so email register/login works locally. Separate from the livekit fix.",
+    "No action needed on livekit — the fix (livekit-api==1.2.1, livekit-protocol==1.1.27) is working: backend starts, module imports, and /api/livekit/token route executes auth checks instead of crashing."
+  ],
+  "critical_code_review_comments": [
+    "server.py mint_token() uses JWT_SECRET without a startup-time guard — a missing SUPABASE_JWT_SECRET turns every auth endpoint into an opaque 500. Prefer failing fast on boot or returning a clear 503 with actionable text.",
+    "server.py is 5852 lines — well over the 700-line guideline. Split into routers/modules (auth, livekit, interests, posts, etc.) for maintainability."
+  ],
+  "updated_files": ["/app/backend/tests/test_livekit_smoke.py"],
+  "success_rate": {"backend": "livekit-fix verification: 100% (import + health + livekit route reachable). Auth flow blocked by unrelated env gap.", "frontend": "N/A (skipped per request)"},
+  "test_credentials": "No seeded creds. /app/memory/test_credentials.md not present.",
+  "seed_data_creation": "None.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "The livekit startup/import regression is fully resolved — do not revisit unless requirements.txt changes. The remaining 500 on /api/auth/register and /api/auth/login is a config issue (SUPABASE_JWT_SECRET missing in backend/.env); once set, re-run /app/backend/tests/test_livekit_smoke.py and the full auth path (including the final 500 'LiveKit not configured' on /api/livekit/token) will pass.",
+  "rca of the issue": "Primary task RCA: `from livekit import api as lk_api` crashed at import because livekit-api was not installed. Fix (pinning livekit-api==1.2.1 and livekit-protocol==1.1.27 in requirements.txt and installing) resolves the import and startup. Verified via (a) importlib.import_module('server') succeeds, (b) GET /api/ -> 200, (c) POST /api/livekit/token -> 401 (auth gate, not 502/ImportError). Secondary (unrelated) RCA for the register/login 500: SUPABASE_JWT_SECRET is unset in /app/backend/.env, so mint_token() calls jwt.encode(..., '', algorithm='HS256') which pyjwt rejects with InvalidKeyError('HMAC key must not be empty.'). Mitigation: add SUPABASE_JWT_SECRET=<random 32+ byte secret> to backend/.env and restart backend."
+}

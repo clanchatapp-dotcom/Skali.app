@@ -1,0 +1,51 @@
+{
+  "summary": "Iteration 31 — tested the Assign-To-Staff (support claim/release/takeover) feature and the profile Followers/Following stat-block bug fix. Backend: 12/12 pytest cases pass. Frontend (mobile 390x860, preview DB): all acceptance checks pass.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "backend_tests_executed": [
+    "TestFollowAndConnections::test_viewer_follow_tester — POST /api/follow/thisismajorofficial as viewer → 200",
+    "TestFollowAndConnections::test_tester_sees_viewer_in_followers — /api/connections as tester lists #viewer, counts.followers≥1",
+    "TestFollowAndConnections::test_viewer_sees_tester_in_following — /api/connections as viewer lists #thisismajorofficial",
+    "TestFollowAndConnections::test_profile_counts_present — /api/users/thisismajorofficial as owner → is_self=true, followers_count≥1",
+    "TestFollowAndConnections::test_other_profile_marks_not_self — same endpoint as viewer → is_self=false",
+    "TestSupportClaim::test_normal_user_forbidden — POST /api/admin/support/claim/{handle} as viewer → 403",
+    "TestSupportClaim::test_bot_claim_viewer_thread — bot claim → assigned={id,handle=skali_support,display_name,at}",
+    "TestSupportClaim::test_threads_list_includes_assigned — /threads shows assigned for viewer",
+    "TestSupportClaim::test_thread_detail_includes_assigned — /threads/viewer shows assigned",
+    "TestSupportClaim::test_solve_does_not_clear_assignment — solve + reopen preserve assigned",
+    "TestSupportClaim::test_moderator_takeover — temp-promote tester to moderator → claim viewer thread reassigns to tester; role reset to null afterwards",
+    "TestSupportClaim::test_release_clears_assignment — POST claim:false → assigned null, thread detail confirms"
+  ],
+  "frontend_checks_executed": [
+    "tester login → bottom-nav-me opens /u/thisismajorofficial; profile-followers-btn and profile-following-btn both enabled (disabled=false)",
+    "Click profile-followers-btn → navigates to /connections?tab=followers; '#viewer' listed in followers",
+    "Click profile-following-btn → /connections?tab=following",
+    "viewer login → Me → profile-following-btn → /connections?tab=following lists 'thisismajorofficial' (the user they just followed)",
+    "viewer views tester's profile at /u/thisismajorofficial → both profile-followers-btn and profile-following-btn disabled=true (private by design)",
+    "bot login → /admin → support-thread-viewer visible; click opens modal",
+    "Modal header on 390px: width=356, scrollWidth=clientWidth=356 (no overflow). Buttons visible together: Claim, Mark solved, close (X)",
+    "Click support-claim-btn → support-thread-status becomes '#viewer · you are handling this · replying as Skali Team'; support-release-btn appears",
+    "Close modal + reload /admin → support-assigned-viewer tag shows 'Handled by you'",
+    "Click support-release-btn → assignment cleared; row no longer carries assigned tag"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_claim_and_profile_stats.py",
+    "/app/test_reports/pytest/iter31.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Reiterating from previous iterations: /app/backend/server.py is still 6168 lines — well past the 700-line guideline. Support (bot + claim + solve + reply) is a clean candidate to extract.",
+    "Legacy duplicate frontend tree at /app/frontend/src is still present; only /app/src is live. Recommend removing /app/frontend/src to prevent future confusion.",
+    "Login endpoint returns 'access_token' (not 'token'); previous iteration's test_support_and_live_banner.py already uses the right key — kept consistent in the new test file."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_claim_and_profile_stats.py (new)"
+  ],
+  "success_rate": {"backend": "100% (12/12)", "frontend": "100% (all acceptance checks)"},
+  "test_credentials": "skaliappteam@gmail.com / Skaliappteam_1 (bot, user_id=skali-support-bot, handle=skali_support). tester@skali.test / Test1234! (#thisismajorofficial). viewer@skali.test / Test1234! (#viewer).",
+  "seed_data_creation": "viewer now follows tester (persisted). Role toggle on tester to 'moderator' during takeover test was reset to null in the test teardown. Any claim created during the UI test was released at the end of the UI run.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Preview DB only. Profile route is /u/{handle}; /me redirects there. API login returns access_token. Profile endpoint is /api/users/{handle} (not /api/profile). Support row testids follow pattern support-thread-{handle}, support-solved-{handle}, support-assigned-{handle}. The bot's handle is skali_support (not skaliappteam). Modal header on 390 width accommodates Claim + Mark solved + close (X) with no overflow.",
+  "rca of the issue": "Original bug 'can't click Followers/Following on Me page': fixed by this review — profile-followers-btn / profile-following-btn navigate to /connections?tab=followers|following when p.is_self is true. Verified end-to-end: viewer→follow→tester, tester sees viewer under Followers, viewer sees tester under Following."
+}

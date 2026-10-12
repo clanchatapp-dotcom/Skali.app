@@ -1,0 +1,33 @@
+{
+  "summary": "Regression re-verification of Skali web preview after the main agent restored the repo-root Capacitor structure (root src/, android/, root package.json). The /app/frontend Vite app that the preview serves was untouched, and the preview app behaves exactly as in iteration_1 — no JS errors, no regressions. All 6 flows from the review request pass.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": {
+    "app_loads": "PASS — https://admin-bot-support.preview.emergentagent.com renders the Login screen cleanly (Skali branding, marketing copy, login card). 0 console/page errors.",
+    "google_button": "PASS — 'Continue with Google' is visible & clickable. Click navigates to accounts.google.com OAuth flow with the correct Supabase project client_id (572913753788-...apps.googleusercontent.com) and redirect_uri https://ixahrtibbpjruggivjik.supabase.co/auth/v1/callback. No JS errors thrown; OAuth navigation initiates as expected. (Completing Google login is out of scope — Supabase Google provider not configured here.)",
+    "email_login": "PASS — admin@skaliapp.com / Skali!Admin2026 logs in, lands on My Feed, cc_token stored in localStorage (357 chars JWT). No onboarding tour/DOB modal appeared for this seeded admin user.",
+    "welcome_dm_regression": "PASS (indirectly) — The Support inbox in /admin lists 10 threads including the freshly seeded 'Xavi1790549324' account whose first message is the automated 'Hi, welcome to Skali…' DM from Skali Team, confirming the auto-welcome DM on registration is still firing.",
+    "admin_creators": "PASS — Clicking the 'Creators' tab renders [data-testid=creators-panel]. Searching for 'admin' returns Skali Admin with a working grant/revoke creator button ([data-testid=grant-creator-…] / revoke-creator-…).",
+    "admin_support": "PASS — 'Support' tab renders [data-testid=support-panel] with 10 support-thread-{handle} entries; opening a thread shows the conversation and both [data-testid=support-reply-input] and [data-testid=support-reply-send] are present and functional.",
+    "stories_feed": "PASS — [data-testid=story-rail] and [data-testid=add-story-btn] present on My Feed; clicking add-story-btn opens the file picker without error.",
+    "stories_profile": "PASS — At /u/skaliadmin, [data-testid=profile-story-avatar] and [data-testid=profile-add-story] are both present ('Add to Story' button visible). Note: the profile route is /u/:handle (there is no /me route)."
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Google OAuth on web works via Supabase (supabase.ts signInGoogleWeb). For the native Android APK sign-in failure the user reports, the fix is not in the web app but in the Android/Capacitor configuration: (a) ensure the Google Cloud OAuth Android client has the release keystore SHA-1 fingerprint registered, (b) use @capacitor/google-auth or a native intent flow (not window.location redirect) inside the APK, and (c) configure the WebView/Capacitor server URL and allowNavigation whitelist for accounts.google.com. This cannot be verified in a browser preview — needs a physical device + Google Cloud console access.",
+    "The review request references data-testid values 'creators-panel' and 'support-panel' as first-class checks; these testids only exist inside the tab body and only render when the tab is active (tab list is horizontally scrollable). This is fine but worth documenting for future automation."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "n/a (skipped per request)", "frontend": "100% (8/8 checks)" },
+  "test_credentials": "Admin: admin@skaliapp.com / Skali!Admin2026 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "None — used existing seeded admin + pre-existing support threads.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Preview URL https://admin-bot-support.preview.emergentagent.com serves /app/frontend (Vite+React+TS). Login card has input[type=email] placeholder 'you@email.com', input[type=password], button 'Sign in', button 'Continue with Google'. Token in localStorage 'cc_token'. Admin page tab list is horizontally scrollable — click by button name (Creators/Support/…); panels render inside their tab. Profile route is /u/:handle (not /me). The repo-root Capacitor restructure did not affect the web app.",
+  "rca_of_issue": "N/A for the web preview — 0 regressions. The user's underlying APK Google-sign-in failure is a native/Capacitor + Google Cloud SHA-1 configuration issue and is not reproducible or fixable from this preview environment."
+}

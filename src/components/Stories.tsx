@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
+import { Capacitor } from '@capacitor/core'
 import { api } from '../lib/api'
 import { Avatar } from '../lib/ui'
 import { useAuth } from '../lib/auth'
 import { Plus, X, Loader2, Trash2, Eye, Radio, Image as ImageIcon, PlayCircle } from 'lucide-react'
 import LiveModal from './LiveModal'
 import MediaLightbox from './MediaLightbox'
-import { Capacitor } from '@capacitor/core'
 
 const isNative = (() => { try { return Capacitor.isNativePlatform() } catch { return false } })()
 
@@ -36,6 +36,13 @@ export function StoryViewer({ groups, startGroup = 0, onClose, onChanged }: {
   const raf = useRef<number | null>(null)
   const start = useRef<number>(0)
   const videoRef = useRef<HTMLVideoElement | null>(null)
+
+  // Keep the story screen above feed/layout overflow and stacking contexts.
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = previousOverflow }
+  }, [])
 
   const group = groups[gi]
   const story = group?.stories[si]
@@ -107,9 +114,9 @@ export function StoryViewer({ groups, startGroup = 0, onClose, onChanged }: {
 
   if (!group || !story) return null
 
-  return (
-    <div className="fixed inset-0 z-[80] bg-black flex items-center justify-center select-none" data-testid="story-viewer">
-      <div className="relative w-full h-full max-w-[480px] mx-auto flex flex-col">
+  return createPortal((
+    <div className="fixed inset-0 z-[9999] bg-black flex items-center justify-center select-none" data-testid="story-viewer" role="dialog" aria-modal="true" style={{ width: '100vw', height: '100dvh', maxWidth: '100vw', maxHeight: '100dvh', overscrollBehavior: 'none' }}>
+      <div className="relative w-full h-full flex flex-col">
         {/* Progress bars */}
         <div className="absolute top-0 inset-x-0 z-20 flex gap-1 px-3 pt-[calc(0.5rem+env(safe-area-inset-top))]">
           {group.stories.map((s, i) => (
@@ -187,7 +194,7 @@ export function StoryViewer({ groups, startGroup = 0, onClose, onChanged }: {
         </div>
       )}
     </div>
-  )
+  ), document.body)
 }
 
 // ---------------------------------------------------------------------------

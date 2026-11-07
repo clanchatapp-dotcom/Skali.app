@@ -44,6 +44,12 @@ export default function PostCard({ post, onDelete }: { post: any; onDelete?: (id
     try { const r = await api.setPostWatermark(post.id, !watermark); setWatermark(!!r.watermark) } catch (e: any) { alert(e.message) }
   }
   const hasImage = (post.media || []).some((m: any) => m.type === 'image')
+  // Watermarked copy for a photo (creator turned it on); undefined = download the file as-is.
+  const stampedLoader = (m: any): (() => Promise<Blob>) | undefined => {
+    if (!watermark || m?.type !== 'image') return undefined
+    const i = (post.media || []).findIndex((x: any) => x.url === m.url)
+    return i >= 0 ? () => api.downloadPostMedia(post.id, i) : undefined
+  }
   const noSave = canDl ? undefined : (e: React.MouseEvent) => e.preventDefault()
   const [history, setHistory] = useState<any | null>(null)
   const openHistory = async () => {
@@ -186,9 +192,7 @@ export default function PostCard({ post, onDelete }: { post: any; onDelete?: (id
                   {post.spoiler && <button type="button" onClick={() => setRevealed(false)} data-testid={`post-spoiler-hide-${post.id}`} className="h-9 px-3 rounded-full bg-black/60 text-white text-xs font-medium hover:bg-black/80">Hide</button>}
                   {canDl && (() => {
                     const cur = visuals[Math.min(activeIdx, visuals.length - 1)]
-                    const stamped = watermark && !post.can_edit && cur.type === 'image'
-                    const idx = (post.media || []).findIndex((x: any) => x.url === cur.url)
-                    return <DownloadButton url={cur.url} type={cur.type} testId={`post-download-${post.id}`} getBlob={stamped && idx >= 0 ? () => api.downloadPostMedia(post.id, idx) : undefined} />
+                    return <DownloadButton url={cur.url} type={cur.type} testId={`post-download-${post.id}`} getBlob={stampedLoader(cur)} />
                   })()}
                 </div>
               )}
@@ -214,7 +218,7 @@ export default function PostCard({ post, onDelete }: { post: any; onDelete?: (id
           ))}
 
           {lightbox && visuals.length > 0 && (
-            <MediaLightbox items={visuals} index={lbIndex} canDownload={canDl} onClose={() => setLightbox(false)} />
+            <MediaLightbox items={visuals} index={lbIndex} canDownload={canDl} getBlob={stampedLoader} onClose={() => setLightbox(false)} />
           )}
           {post.tags?.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">

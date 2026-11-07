@@ -10,7 +10,7 @@ type Item = { url: string; type: string }
 //  - swipe DOWN to dismiss
 //  - swipe LEFT/RIGHT (or arrows) to move between a person's photos/videos
 //  - pinch-to-zoom + drag-to-pan on photos (double-tap toggles 2x)
-export default function MediaLightbox({ items, index = 0, onClose, canDownload = false }: { items: Item[]; index?: number; onClose: () => void; canDownload?: boolean }) {
+export default function MediaLightbox({ items, index = 0, onClose, canDownload = false, getBlob }: { items: Item[]; index?: number; onClose: () => void; canDownload?: boolean; getBlob?: (item: Item) => (() => Promise<Blob>) | undefined }) {
   const [idx, setIdx] = useState(index)
   const [scale, setScale] = useState(1)
   const [tx, setTx] = useState(0)
@@ -100,7 +100,7 @@ export default function MediaLightbox({ items, index = 0, onClose, canDownload =
     >
       {canDownload && (
         <div className="absolute right-16 top-[calc(0.75rem+env(safe-area-inset-top))] z-20" onClick={e => e.stopPropagation()}>
-          <DownloadButton url={cur.url} type={cur.type} testId="lightbox-download" className="h-10" label />
+          <DownloadButton url={cur.url} type={cur.type} testId="lightbox-download" className="h-10" label getBlob={getBlob?.(cur)} />
         </div>
       )}
       <button

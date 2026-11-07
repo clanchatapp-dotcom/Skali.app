@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import LiveNowBanner from '../components/LiveNowBanner'
 import { isNative } from '../lib/nativeGoogle'
 import { api } from '../lib/api'
+import { useAuth } from '../lib/auth'
 import { TIER, TierKey } from '../lib/ui'
 import PostCard from '../components/PostCard'
 import { StoryRail } from '../components/Stories'
@@ -28,6 +29,9 @@ function Composer({ onPosted }: { onPosted: () => void }) {
   const [aiLabel, setAiLabel] = useState('none')
   const [spoiler, setSpoiler] = useState(false)
   const [allowDownload, setAllowDownload] = useState(true)
+  const { user } = useAuth()
+  const isCreator = !!(user as any)?.creator_account
+  const [watermark, setWatermark] = useState(false)
   const [expanded, setExpanded] = useState(false)
   const [nsfwTags, setNsfwTags] = useState<string[]>([])
   const [nsfwVocab, setNsfwVocab] = useState<string[]>([])
@@ -127,7 +131,8 @@ function Composer({ onPosted }: { onPosted: () => void }) {
         people_tags: people,
         ai_label: hasVisual ? aiLabel : 'none',
         spoiler: hasVisual && spoiler,
-        allow_download: allowDownload
+        allow_download: allowDownload,
+        watermark: isCreator && tier === 'public' && watermark && mediaList.some(m => m.type === 'image')
       })
 
       setText('')
@@ -284,6 +289,12 @@ function Composer({ onPosted }: { onPosted: () => void }) {
                 <button type="button" onClick={() => setSpoiler(v => !v)} data-testid="post-spoiler-toggle"
                   className={`text-xs px-2.5 py-1 rounded-full border transition ${spoiler ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' : 'border-edge text-slate-400 hover:text-white'}`}>
                   {spoiler ? 'Spoiler: on' : 'Mark as spoiler'}
+                </button>
+              )}
+              {isCreator && tier === 'public' && mediaList.some(m => m.type === 'image') && (
+                <button type="button" onClick={() => setWatermark(v => !v)} data-testid="post-watermark-toggle"
+                  className={`text-xs px-2.5 py-1 rounded-full border transition ${watermark ? 'bg-brand/20 text-brand border-brand/40' : 'border-edge text-slate-400 hover:text-white'}`}>
+                  {watermark ? 'Watermark: on' : 'Add my watermark'}
                 </button>
               )}
               {tier === 'public' ? (

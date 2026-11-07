@@ -182,7 +182,29 @@ export default function Admin() {
   }
   const nsfwResolve = async (id: string, action: string) => { await api.adminNsfwResolve(id, action); await load(); await loadStats() }
   const csamEscalate = async (id: string) => { if (!ensureStepUp()) return; try { const r = await api.adminCsamEscalate(id); alert(`Escalated. Reference: ${r.ceop_ref}`); await load() } catch (e: any) { alert(e.message) } }
-  const csamResolve = async (id: string) => { if (!ensureStepUp()) return; await api.adminCsamResolve(id); await load(); await loadStats() }
+  const csamResolve = async (id: string) => { if (!ensureStepUp()) return; try { await api.adminCsamResolve(id); await load(); await loadStats() } catch (e: any) { alert(e.message) } }
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    if (tab !== 'csam') return
+    const t = setInterval(() => setTick(x => x + 1), 60000)
+    return () => clearInterval(t)
+  }, [tab])
+  const csamClock = (r: any): { text: string; cls: string } | null => {
+    if (r.escalated || r.review?.status === 'closed' || !r.deadline_at) return null
+    const ms = new Date(r.deadline_at).getTime() - Date.now()
+    if (ms <= 0) return { text: 'OVERDUE', cls: 'bg-red-600/40 text-red-100' }
+    const h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000)
+    const cls = ms < 6 * 3600000 ? 'bg-red-600/30 text-red-200' : ms < 24 * 3600000 ? 'bg-amber-500/25 text-amber-200' : 'bg-white/5 text-slate-300'
+    return { text: `${h}h ${m}m left`, cls }
+  }
+  const csamVote = async (id: string, verdict: 'yes' | 'no') => {
+    if (!ensureStepUp()) return
+    const msg = verdict === 'yes'
+      ? 'Confirm: this IS CSAM. Your review is final and stays private until the second reviewer has voted.'
+      : 'Confirm: this is NOT CSAM. Your review is final and stays private until the second reviewer has voted.'
+    if (!window.confirm(msg)) return
+    try { await api.adminCsamVote(id, verdict); await load(); await loadStats() } catch (e: any) { alert(e.message) }
+  }
   const addAdmin = async () => {
     const email = newAdminEmail.trim()
     if (!email) return
@@ -465,31 +487,48 @@ export default function Admin() {
                     ? <button onClick={() => assignReport(r, false)} data-testid={`report-release-${r.id}`} className="ml-auto px-2.5 py-1 rounded-lg border border-edge text-slate-300">Release</button>
                     : <button onClick={() => assignReport(r, true)} data-testid={`report-assign-${r.id}`} className="ml-auto px-2.5 py-1 rounded-lg bg-sky-500/15 text-sky-300 font-semibold flex items-center gap-1"><Hand className="h-3.5 w-3.5" />{r.assigned ? 'Take over' : 'Assign to me'}</button>}
                 </div>
-                <div className="mt-3 flex flex-wrap gap-2">
+                {(r.category === 'csam' || r.category === 'underage') && !r.review_outcome
+                  ? <p className="mt-3 text-xs text-rose-300/80" data-testid={`report-needs-review-${r.id}`}>Needs two independent reviews in the CSAM tab before any action.{r.my_review ? ` You voted ${r.my_review}.` : ''}</p>
+                  : <div className="mt-3 flex flex-wrap gap-2">
                   <button onClick={() => act(r.id, 'dismiss')} className="px-3 py-1.5 rounded-lg border border-edge text-sm">Dismiss</button>
                   <button onClick={() => act(r.id, 'remove_content')} className="px-3 py-1.5 rounded-lg bg-amber-500/15 text-amber-300 text-sm flex items-center gap-1"><Trash2 className="h-3.5 w-3.5" />Remove content</button>
                   <button onClick={() => act(r.id, 'warn_user')} className="px-3 py-1.5 rounded-lg bg-white/5 text-sm">Soft warn</button>
                   <button onClick={() => act(r.id, 'strike_user')} className="px-3 py-1.5 rounded-lg bg-rose-500/15 text-rose-300 text-sm flex items-center gap-1"><Ban className="h-3.5 w-3.5" />Strike</button>
                   <button onClick={() => act(r.id, 'uphold')} className="px-3 py-1.5 rounded-lg bg-orange-500/20 text-orange-300 text-sm font-medium">Uphold</button>
                   {isFull && <button onClick={() => act(r.id, 'uphold', true)} className="px-3 py-1.5 rounded-lg bg-red-600/25 text-red-300 text-sm font-medium flex items-center gap-1"><Ban className="h-3.5 w-3.5" />Uphold · terminate</button>}
-                </div>
+                </div>}
               </div>
             ))}
 
-            {tab === 'csam' && data.map(r => (
-              <div key={r.id} className="bg-rose-500/5 border border-rose-500/30 rounded-2xl p-4">
-                <div className="flex items-center gap-2"><AlertTriangle className="h-4 w-4 text-rose-400" />
+            {tab === 'csam' && data.map(r => {
+              const st: string = r.review?.status || 'pending'
+              const mine: string | null = r.review?.my_vote || null
+              const clock = csamClock(r)
+              return (
+              <div key={r.id} className="bg-rose-500/5 border border-rose-500/30 rounded-2xl p-4" data-testid={`csam-card-${r.id}`}>
+                <div className="flex items-center gap-2 flex-wrap"><AlertTriangle className="h-4 w-4 text-rose-400" />
                   <span className="font-semibold text-rose-300">{r.category}</span>
+                  {clock && <span data-testid={`csam-clock-${r.id}`} className={`text-xs px-1.5 py-0.5 rounded font-semibold ${clock.cls}`}>{clock.text}</span>}
+                  {r.auto_escalated && <span data-testid={`csam-auto-${r.id}`} className="text-xs bg-red-600/30 text-red-200 px-1.5 py-0.5 rounded font-semibold">Passed on automatically (72h)</span>}
+                  {st === 'flag_police' && <span data-testid={`csam-tag-${r.id}`} className="text-xs bg-red-600/30 text-red-200 px-1.5 py-0.5 rounded font-semibold">Flag to police</span>}
+                  {st === 'joint_review' && <span data-testid={`csam-tag-${r.id}`} className="text-xs bg-amber-500/25 text-amber-200 px-1.5 py-0.5 rounded font-semibold">Joint review</span>}
+                  {st === 'closed' && <span data-testid={`csam-tag-${r.id}`} className="text-xs bg-slate-500/25 text-slate-300 px-1.5 py-0.5 rounded font-semibold">Case closed</span>}
                   {r.escalated && <span className="text-xs bg-rose-500/30 text-rose-200 px-1.5 py-0.5 rounded">{r.ceop_ref || 'escalated'}</span>}
                   {r.status === 'resolved' && <span className="text-xs bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded">resolved</span>}
                   <span className="text-xs text-slate-500 ml-auto">{timeAgo(r.created_at)}</span></div>
                 <div className="text-sm text-slate-400 mt-1">{r.target_type} · {r.target_id} · reporter #{r.reporter_handle}</div>
+                {st === 'pending' && (mine
+                  ? <p className="text-xs text-slate-400 mt-3" data-testid={`csam-voted-${r.id}`}>You reviewed this: {mine === 'yes' ? 'Yes, it is CSAM' : 'No, it is not CSAM'}. Waiting for the second review.</p>
+                  : <div className="flex gap-2 mt-3">
+                      <button onClick={() => csamVote(r.id, 'yes')} data-testid={`csam-vote-yes-${r.id}`} className="px-3 py-1.5 rounded-lg bg-rose-600 text-white text-sm font-medium">Yes, this is CSAM</button>
+                      <button onClick={() => csamVote(r.id, 'no')} data-testid={`csam-vote-no-${r.id}`} className="px-3 py-1.5 rounded-lg border border-edge text-sm">No, not CSAM</button>
+                    </div>)}
                 <div className="flex gap-2 mt-3">
-                  {!r.escalated && <button onClick={() => csamEscalate(r.id)} className="px-3 py-1.5 rounded-lg bg-rose-600 text-white text-sm flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5" />Escalate to CEOP</button>}
-                  {r.status !== 'resolved' && <button onClick={() => csamResolve(r.id)} className="px-3 py-1.5 rounded-lg border border-edge text-sm flex items-center gap-1"><Check className="h-3.5 w-3.5" />Mark resolved</button>}
+                  {!r.escalated && st === 'flag_police' && <button onClick={() => csamEscalate(r.id)} className="px-3 py-1.5 rounded-lg bg-rose-600 text-white text-sm flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5" />Escalate to CEOP</button>}
+                  {r.status !== 'resolved' && st !== 'pending' && <button onClick={() => csamResolve(r.id)} className="px-3 py-1.5 rounded-lg border border-edge text-sm flex items-center gap-1"><Check className="h-3.5 w-3.5" />Mark resolved</button>}
                 </div>
               </div>
-            ))}
+            )})}
 
             {tab === 'nsfw' && (data.length === 0
               ? <p className="text-center text-slate-500 py-10">No AI-flagged media awaiting review.</p>

@@ -4,6 +4,7 @@ import uuid
 import time
 import base64
 import hashlib
+import json
 import hmac
 import secrets
 import logging
@@ -214,7 +215,10 @@ ACTIVITY_TYPE_TO_NOTIF = {
 RELATION_KINDS = ('block', 'mute', 'restrict')
 
 REPORT_CATEGORIES = {'csam', 'underage', 'harassment', 'hate', 'self_harm',
-                     'inappropriate', 'unlabelled_ai', 'impersonation', 'spam', 'other'}
+                     'inappropriate', 'unlabelled_ai', 'impersonation', 'spam', 'nsfw', 'other'}
+# Report categories only Co-admins / Super admins may see or handle.
+SENSITIVE_REPORT_CATS = {'csam', 'underage', 'nsfw'}
+REPORT_TARGET_TYPES = {'post', 'user', 'message'}
 
 # AI content labels — mandatory pick for AI media; permanent badge on the post.
 AI_LABELS = {'none', 'generated', 'assisted', 'altered'}
@@ -589,6 +593,7 @@ async def public_profile(prof: dict, viewer_id: str) -> dict:
         out['following_count'] = following_count  # private: owner only
         out['is_admin'] = is_admin_user(prof)
         out['can_moderate'] = effective_role(prof) in MOD_ROLES
+        out['staff_role'] = effective_role(prof)
         out['is_support_bot'] = prof['id'] == BOT_ID
         out['allow_coadmin_dms'] = bool(prof.get('allow_coadmin_dms'))
         out['can_go_live'] = can_go_live(prof)
@@ -670,6 +675,8 @@ async def post_out(p: dict, viewer_id: str) -> dict:
         'media': p.get('media') or ([{'url': p['media_url'], 'type': p.get('media_type') or 'image'}] if p.get('media_url') else []),
         'tags': p.get('tags', []), 'nsfw': bool(p.get('nsfw')), 'nsfw_tags': p.get('nsfw_tags', []), 'ai_label': p.get('ai_label', 'none'), 'edited': bool(p.get('edited')), 'edited_count': len(p.get('edit_history', [])), 'pinned': bool(p.get('pinned')), 'can_edit': p['author_id'] == viewer_id, 'created_at': p['created_at'],
         'people_tags': people_tags, 'my_tag_status': my_tag_status,
+        'allow_download': p.get('allow_download', True) is not False, 'spoiler': bool(p.get('spoiler')),
+        'can_download': p['tier'] == 'public' and p.get('allow_download', True) is not False,
         'like_count': len(p.get('likes', [])), 'liked': liked,
         'likeable': p['tier'] == 'public',
         'reactions': counts, 'reaction_total': sum(counts.values()), 'my_reaction': my_reaction,
@@ -729,6 +736,8 @@ class PostCreate(BaseModel):
     nsfw_tags: Optional[list] = None    # closed vocab (@NSFW/@GNSFW/@LNSFW/@TNSFW); chosen, not typed
     people_tags: Optional[list] = None  # handles to tag; each requires that person's approval
     ai_label: Optional[str] = 'none'  # none | generated | assisted | altered
+    allow_download: Optional[bool] = True  # poster can block downloads (only public posts are ever downloadable)
+    spoiler: Optional[bool] = False        # media blurred until the viewer taps to reveal
 
 class ReactBody(BaseModel):
     emoji: str  # like | love | haha | wow | sad | angry
@@ -746,6 +755,7 @@ class DMSend(BaseModel):
     duration: Optional[float] = None
     view_once: Optional[bool] = False  # disappearing media: recipient may open it a single time
     allow_save: Optional[bool] = True   # if False, recipient can't save/download the media
+    spoiler: Optional[bool] = False     # media blurred until the recipient taps to reveal
     silent: Optional[bool] = False      # silent DM: deliver normally but skip the push notification
     scheduled_at: Optional[str] = None  # ISO datetime; if in the future, the DM is queued and delivered then
 
@@ -1986,6 +1996,7 @@ async def create_post(body: PostCreate, u: dict = Depends(get_current_user)):
            'media': media_items, 'tags': tags,
            'nsfw_tags': nsfw_tags, 'nsfw': is_nsfw,
            'people_tags': people, 'ai_label': ai_label,
+           'allow_download': body.allow_download is not False, 'spoiler': bool(body.spoiler) and bool(media_items),
            'likes': [], 'created_at': datetime.now(timezone.utc).isoformat()}
     await db.posts.insert_one(dict(doc))
     # Block 5: register tags in the registry (dedupe + counts + nsfw flag).
@@ -2308,7 +2319,7 @@ async def dm_history(handle: str, u: dict = Depends(get_current_user)):
                     'media_url': media_url,
                     'media_type': m.get('media_type'), 'duration': m.get('duration'),
                     'view_once': vo, 'view_once_viewed': False,
-                    'allow_save': m.get('allow_save', True),
+                    'allow_save': m.get('allow_save', True), 'spoiler': bool(m.get('spoiler')),
                     'pinned': bool(m.get('pinned')), 'deleted': False,
                     'created_at': m['created_at'], 'mine': mine})
     await mark_read('dm', room, u['id'])  # opening a thread marks it read
@@ -2331,7 +2342,8 @@ def _parse_dt_utc(s: str) -> datetime:
 
 
 async def _store_and_deliver_dm(sender: dict, other: dict, *, text: str, media_url, media_type,
-                                duration, view_once_flag: bool, allow_save_flag: bool, silent: bool) -> dict:
+                                duration, view_once_flag: bool, allow_save_flag: bool, silent: bool,
+                                spoiler_flag: bool = False) -> dict:
     """Persist a DM, push it over the live WS, and (unless silent) fire a push notification.
     Shared by the instant-send endpoint and the scheduled-DM worker."""
     room = dm_room(sender['id'], other['id'])
@@ -2340,12 +2352,13 @@ async def _store_and_deliver_dm(sender: dict, other: dict, *, text: str, media_u
            'sender_id': sender['id'], 'content_enc': enc(text),
            'media_url': media_url, 'media_type': media_type, 'duration': duration,
            'view_once': view_once_flag, 'view_once_viewed': False, 'allow_save': allow_save_flag,
-           'pinned': False, 'created_at': created}
+           'spoiler': spoiler_flag, 'pinned': False, 'created_at': created}
     await db.dms.insert_one(dict(doc))
     wire_media = None if view_once_flag else media_url
     msg = {'id': doc['id'], 'sender_id': sender['id'], 'text': text, 'media_url': wire_media,
            'media_type': media_type, 'duration': duration,
-           'view_once': view_once_flag, 'view_once_viewed': False, 'allow_save': allow_save_flag, 'created_at': created}
+           'view_once': view_once_flag, 'view_once_viewed': False, 'allow_save': allow_save_flag,
+           'spoiler': spoiler_flag, 'created_at': created}
     await manager.broadcast(room, {'type': 'dm', 'message': msg})
     if other['id'] != sender['id'] and not silent:
         preview = '🎤 Voice message' if media_type == 'audio' else ('📷 Photo' if media_url else (text or '')[:100])
@@ -2367,6 +2380,7 @@ async def dm_send(handle: str, body: DMSend, u: dict = Depends(get_current_user)
         raise HTTPException(400, 'Empty message')
     view_once = bool(body.view_once) and bool(body.media_url)  # only meaningful with media
     allow_save = bool(body.allow_save) and not view_once  # view-once media is never savable
+    spoiler = bool(body.spoiler) and bool(body.media_url) and body.media_type != 'audio'
     # Scheduled send: if a future time is given, queue it instead of delivering now.
     if body.scheduled_at:
         try:
@@ -2377,7 +2391,7 @@ async def dm_send(handle: str, body: DMSend, u: dict = Depends(get_current_user)
             sdoc = {'id': str(uuid.uuid4()), 'sender_id': u['id'], 'sender_handle': u['handle'],
                     'recipient_id': other['id'], 'recipient_handle': other['handle'],
                     'content_enc': enc(text), 'media_url': body.media_url, 'media_type': body.media_type,
-                    'duration': body.duration, 'view_once': view_once, 'allow_save': allow_save,
+                    'duration': body.duration, 'view_once': view_once, 'allow_save': allow_save, 'spoiler': spoiler,
                     'silent': bool(body.silent), 'deliver_at': when.isoformat(),
                     'status': 'pending', 'created_at': datetime.now(timezone.utc).isoformat()}
             await db.scheduled_dms.insert_one(dict(sdoc))
@@ -2387,7 +2401,8 @@ async def dm_send(handle: str, body: DMSend, u: dict = Depends(get_current_user)
         # time is essentially now (or past) — fall through and send immediately
     msg = await _store_and_deliver_dm(
         u, other, text=text, media_url=body.media_url, media_type=body.media_type,
-        duration=body.duration, view_once_flag=view_once, allow_save_flag=allow_save, silent=bool(body.silent))
+        duration=body.duration, view_once_flag=view_once, allow_save_flag=allow_save, silent=bool(body.silent),
+        spoiler_flag=spoiler)
     return {**msg, 'mine': True, 'pinned': False}
 
 
@@ -2471,7 +2486,8 @@ async def _scheduled_dm_worker():
                     await _store_and_deliver_dm(
                         sender, other, text=dec(s.get('content_enc', '')), media_url=s.get('media_url'),
                         media_type=s.get('media_type'), duration=s.get('duration'),
-                        view_once_flag=vo, allow_save_flag=asave, silent=bool(s.get('silent')))
+                        view_once_flag=vo, allow_save_flag=asave, silent=bool(s.get('silent')),
+                        spoiler_flag=bool(s.get('spoiler')))
                     await db.scheduled_dms.update_one({'id': s['id']}, {'$set': {'status': 'sent', 'sent_at': datetime.now(timezone.utc).isoformat()}})
                 except Exception as e:
                     log.info(f'scheduled dm deliver failed {s.get("id")}: {e}')
@@ -3201,6 +3217,21 @@ async def require_full_admin(u: dict = Depends(get_current_user)) -> dict:
     raise HTTPException(403, 'Owner or Co-Admin access required')
 
 
+def is_full_admin(u: dict) -> bool:
+    return effective_role(u) in FULL_ADMIN_ROLES
+
+
+async def require_super(u: dict = Depends(get_current_user)) -> dict:
+    if effective_role(u) == 'super_admin':
+        return u
+    raise HTTPException(403, 'Super admin access required')
+
+
+def _ban_guard(admin: dict):
+    if not is_full_admin(admin):
+        raise HTTPException(403, 'This would ban the account. Only a Co-admin or Super admin can ban.')
+
+
 # --- In-memory fixed-window rate limiter (per key) ---
 _RL_BUCKETS: dict[str, list] = {}
 
@@ -3235,7 +3266,7 @@ async def sensitive_access_guard(u: dict = Depends(require_full_admin),
 
 
 AUDIT_LOGS = ('super_admin', 'co_admin', 'moderator')
-AUDIT_GRANT_HOURS = 24
+RESTRICTED_AUDIT_PREFIXES = ('inv_', 'csam', 'nsfw_', 'view_dms', 'silent_', 'dm_access')
 
 
 def audit_log_of(prof: dict) -> str:
@@ -3244,13 +3275,21 @@ def audit_log_of(prof: dict) -> str:
     return r if r in AUDIT_LOGS else 'co_admin'
 
 
-async def audit(admin: dict, action: str, target: str, detail: str = '', log_role: Optional[str] = None):
-    await db.audit.insert_one({
+async def audit(admin: dict, action: str, target: str, detail: str = '', log_role: Optional[str] = None,
+                restricted: bool = False):
+    """Append-only legal record. Each entry is hash-chained to the previous one so any
+    later edit or deletion is detectable. No endpoint edits or deletes audit entries."""
+    last = await db.audit.find_one({'hash': {'$exists': True}}, {'_id': 0, 'hash': 1}, sort=[('created_at', -1)])
+    entry = {
         'id': str(uuid.uuid4()), 'admin_handle': admin['handle'], 'admin_id': admin['id'],
-        'action': action, 'target': target, 'detail': detail,
+        'admin_role': effective_role(admin), 'action': action, 'target': target, 'detail': detail,
         'log_role': log_role or audit_log_of(admin),
+        'restricted': bool(restricted) or action.startswith(RESTRICTED_AUDIT_PREFIXES),
         'created_at': datetime.now(timezone.utc).isoformat(),
-    })
+        'prev_hash': (last or {}).get('hash', ''),
+    }
+    entry['hash'] = hashlib.sha256(json.dumps(entry, sort_keys=True).encode()).hexdigest()
+    await db.audit.insert_one(entry)
 
 async def _resolve_target_user(target_type: str, target_id: str) -> Optional[dict]:
     if target_type == 'user':
@@ -3259,6 +3298,10 @@ async def _resolve_target_user(target_type: str, target_id: str) -> Optional[dic
         p = await db.posts.find_one({'id': target_id})
         if p:
             return await db.profiles.find_one({'id': p['author_id']}, {'_id': 0})
+    if target_type == 'message':
+        m = await db.dms.find_one({'id': target_id})
+        if m:
+            return await db.profiles.find_one({'id': m['sender_id']}, {'_id': 0})
     return None
 
 async def apply_upheld(prof: dict, category: str, admin: dict, reason: str = '', severe: bool = False):
@@ -3272,6 +3315,8 @@ async def apply_upheld(prof: dict, category: str, admin: dict, reason: str = '',
     count = prof.get('upheld_reports', 0) + 1
     upd = {'upheld_reports': count, 'last_upheld_at': now.isoformat(), 'last_reason': reason or category}
 
+    if zero_tolerance or count >= 10:
+        _ban_guard(admin)
     if zero_tolerance:
         upd.update({'banned': True, 'no_appeal': True, 'termination_reason': reason or category})
         await db.profiles.update_one({'id': prof['id']}, {'$set': upd})
@@ -3312,6 +3357,8 @@ async def apply_strike(prof: dict, reason: str, admin: dict, soft: bool = False)
         await audit(admin, 'soft_warning', prof['handle'], reason)
         return {'strikes': prof.get('strikes', 0), 'stage': 'soft_warning'}
     strikes = prof.get('strikes', 0) + 1
+    if strikes >= 3:
+        _ban_guard(admin)
     upd = {'strikes': strikes, 'last_reason': reason}
     if strikes == 1:
         upd['suspended_until'] = (now + timedelta(hours=48)).isoformat(); stage = 'strike_1_48h'
@@ -3329,10 +3376,22 @@ async def apply_strike(prof: dict, reason: str, admin: dict, soft: bool = False)
 async def create_report(body: ReportIn, u: dict = Depends(get_current_user)):
     if body.category not in REPORT_CATEGORIES:
         raise HTTPException(400, 'Invalid category')
+    if body.target_type not in REPORT_TARGET_TYPES:
+        raise HTTPException(400, 'Invalid report target')
+    target_user = await _resolve_target_user(body.target_type, body.target_id)
+    if not target_user:
+        raise HTTPException(404, 'Nothing to report')
+    if target_user['id'] == u['id']:
+        raise HTTPException(400, 'You cannot report yourself')
+    if body.target_type == 'message':
+        m = await db.dms.find_one({'id': body.target_id}, {'participants': 1})
+        if u['id'] not in (m or {}).get('participants', []):
+            raise HTTPException(403, 'You can only report messages sent to you')
     doc = {
         'id': str(uuid.uuid4()), 'target_type': body.target_type, 'target_id': body.target_id,
         'category': body.category, 'note': (body.note or '')[:500],
-        'reporter_id': u['id'], 'reporter_handle': u['handle'],
+        'reporter_id': u['id'], 'reporter_handle': u['handle'], 'target_user_id': target_user['id'],
+        'sensitive': body.category in SENSITIVE_REPORT_CATS, 'assigned': None,
         'status': 'open', 'created_at': datetime.now(timezone.utc).isoformat(),
     }
     await db.reports.insert_one(dict(doc))
@@ -3347,16 +3406,21 @@ async def create_report(body: ReportIn, u: dict = Depends(get_current_user)):
 @app.get('/api/admin/stats')
 async def admin_stats(a: dict = Depends(require_mod)):
     deleted = (await db.counters.find_one({'_id': 'deleted'}) or {}).get('n', 0)
+    full = is_full_admin(a)
+    rq = {'status': {'$in': ['open', 'assigned']}}
+    if not full:
+        rq['category'] = {'$nin': list(SENSITIVE_REPORT_CATS)}
     return {
+        'role': effective_role(a),
         'users': await db.profiles.count_documents({}),
         'posts': await db.posts.count_documents({}),
-        'open_reports': await db.reports.count_documents({'status': 'open'}),
-        'csam_reports': await db.csam_reports.count_documents({}),
+        'open_reports': await db.reports.count_documents(rq),
+        'csam_reports': await db.csam_reports.count_documents({}) if full else None,
         'suspended': await db.profiles.count_documents({'suspended_until': {'$exists': True}}),
         'banned': await db.profiles.count_documents({'banned': True}),
         'flagged': await db.profiles.count_documents({'flagged': True}),
         'watchlisted': await db.profiles.count_documents({'watchlisted': True}),
-        'nsfw_open': await db.nsfw_queue.count_documents({'status': 'open'}),
+        'nsfw_open': await db.nsfw_queue.count_documents({'status': 'open'}) if full else None,
         'deleted': deleted,
     }
 
@@ -3370,7 +3434,7 @@ class PurgeBody(BaseModel):
 
 
 @app.post('/api/admin/promote')
-async def admin_promote(body: PromoteBody, a: dict = Depends(require_admin)):
+async def admin_promote(body: PromoteBody, a: dict = Depends(require_super)):
     """Promote a user (by email) to admin."""
     email = (body.email or '').strip().lower()
     if not email:
@@ -3378,13 +3442,13 @@ async def admin_promote(body: PromoteBody, a: dict = Depends(require_admin)):
     prof = await db.profiles.find_one({'email': {'$regex': f'^{re.escape(email)}$', '$options': 'i'}}, {'_id': 0})
     if not prof:
         raise HTTPException(404, 'No account with that email')
-    await db.profiles.update_one({'id': prof['id']}, {'$set': {'is_admin': True, 'role': 'admin'}})
+    await db.profiles.update_one({'id': prof['id']}, {'$set': {'is_admin': True, 'role': 'co_admin'}})
     await audit(a, 'promote_admin', prof['handle'], email)
     return {'ok': True, 'promoted': prof['handle']}
 
 
 @app.post('/api/admin/purge-demo')
-async def admin_purge_demo(body: PurgeBody, a: dict = Depends(require_admin)):
+async def admin_purge_demo(body: PurgeBody, a: dict = Depends(require_super)):
     """Purge seeded demo accounts. Optionally include the seeded admin.
     Never deletes the admin performing the action."""
     targets = list(await db.profiles.find(
@@ -3411,7 +3475,7 @@ class AdminEmailBody(BaseModel):
 
 
 @app.get('/api/admin/admins')
-async def admin_list_admins(a: dict = Depends(require_admin)):
+async def admin_list_admins(a: dict = Depends(require_super)):
     """List current admins + any allowlisted emails that don't yet have an account."""
     admins = await db.profiles.find(
         {'is_admin': True},
@@ -3426,7 +3490,7 @@ async def admin_list_admins(a: dict = Depends(require_admin)):
 
 
 @app.post('/api/admin/admins')
-async def admin_add_admin(body: AdminEmailBody, a: dict = Depends(require_admin)):
+async def admin_add_admin(body: AdminEmailBody, a: dict = Depends(require_super)):
     """Add an email as admin. Promotes the account if it exists, otherwise
     allowlists the email so it becomes admin the moment they sign up."""
     email = (body.email or '').strip().lower()
@@ -3436,14 +3500,14 @@ async def admin_add_admin(body: AdminEmailBody, a: dict = Depends(require_admin)
     prof = await db.profiles.find_one({'email': {'$regex': f'^{re.escape(email)}$', '$options': 'i'}}, {'_id': 0})
     promoted = False
     if prof:
-        await db.profiles.update_one({'id': prof['id']}, {'$set': {'is_admin': True, 'role': 'admin'}})
+        await db.profiles.update_one({'id': prof['id']}, {'$set': {'is_admin': True, 'role': 'co_admin'}})
         promoted = True
     await audit(a, 'add_admin', email, 'promoted existing account' if promoted else 'allowlisted (no account yet)')
     return {'ok': True, 'email': email, 'promoted': promoted}
 
 
 @app.post('/api/admin/admins/remove')
-async def admin_remove_admin(body: AdminEmailBody, a: dict = Depends(require_admin)):
+async def admin_remove_admin(body: AdminEmailBody, a: dict = Depends(require_super)):
     """Revoke admin from an email. Cannot remove env super-admins or yourself."""
     email = (body.email or '').strip().lower()
     if email in ADMIN_EMAILS:
@@ -3469,7 +3533,7 @@ class RoleRemoveBody(BaseModel):
 
 
 @app.get('/api/admin/roles')
-async def admin_list_roles(a: dict = Depends(require_admin)):
+async def admin_list_roles(a: dict = Depends(require_super)):
     """List everyone who holds a staff role (super_admin / co_admin / moderator / first_tester)."""
     out = []
     async for p in db.profiles.find({}, {'_id': 0}):
@@ -3485,7 +3549,7 @@ async def admin_list_roles(a: dict = Depends(require_admin)):
 
 
 @app.post('/api/admin/roles/assign')
-async def admin_assign_role(body: RoleAssignBody, a: dict = Depends(require_admin)):
+async def admin_assign_role(body: RoleAssignBody, a: dict = Depends(require_super)):
     """Assign a staff role by @handle. Only super_admin may assign the co_admin role.
     super_admin itself is reserved for built-in owner emails and cannot be assigned here."""
     role = (body.role or '').strip()
@@ -3507,7 +3571,7 @@ async def admin_assign_role(body: RoleAssignBody, a: dict = Depends(require_admi
 
 
 @app.post('/api/admin/roles/remove')
-async def admin_remove_role(body: RoleRemoveBody, a: dict = Depends(require_admin)):
+async def admin_remove_role(body: RoleRemoveBody, a: dict = Depends(require_super)):
     """Remove a staff role by @handle. Only super_admin may remove a Co-Admin.
     Protected built-in Super Admins cannot be demoted."""
     handle = body.handle.strip().lstrip('#@')
@@ -3548,107 +3612,16 @@ async def admin_set_account_type(handle: str, body: AccountTypeBody, a: dict = D
     return {'ok': True, 'handle': handle, 'account_type': t}
 
 
-# ----------------------------- Co-Admin DM access guard -----------------------------
-# Co-Admins have full admin access EXCEPT viewing a Super Admin's DMs, which requires
-# either the Super Admin's global toggle to be ON, or a one-time approved request.
-
-class CoDmToggle(BaseModel):
-    enabled: bool
-
-class DmAccessRequest(BaseModel):
-    handle: str  # the Super Admin whose DMs the Co-Admin wants to view
-
-
-async def super_dm_access_ok(actor: dict, target: dict) -> bool:
-    """Whether `actor` may view `target`'s DMs. Only relevant when target is a Super Admin
-    and actor is a different, non-super staff member (i.e. a Co-Admin)."""
-    if effective_role(target) != 'super_admin':
-        return True                      # target isn't a super admin -> normal rules
-    if target['id'] == actor['id']:
-        return True                      # viewing your own
-    if effective_role(actor) == 'super_admin':
-        return True                      # super admins can view each other
-    if target.get('allow_coadmin_dms'):
-        return True                      # global toggle ON
-    grant = await db.dm_access.find_one({
-        'requester_id': actor['id'], 'target_id': target['id'],
-        'status': 'approved', 'used': False})
-    if grant:
-        # one-time consume
-        await db.dm_access.update_one({'id': grant['id']},
-                                      {'$set': {'used': True, 'used_at': datetime.now(timezone.utc).isoformat()}})
-        return True
-    return False
-
-
-@app.post('/api/admin/settings/coadmin-dms')
-async def set_coadmin_dms(body: CoDmToggle, a: dict = Depends(require_admin)):
-    """Super Admin toggles whether Co-Admins may view their DMs without asking each time."""
-    if effective_role(a) != 'super_admin':
-        raise HTTPException(403, 'Only a Super Admin can change this setting')
-    await db.profiles.update_one({'id': a['id']}, {'$set': {'allow_coadmin_dms': bool(body.enabled)}})
-    return {'ok': True, 'allow_coadmin_dms': bool(body.enabled)}
-
-
-@app.post('/api/admin/dm-access/request')
-async def dm_access_request(body: DmAccessRequest, a: dict = Depends(require_admin)):
-    """A Co-Admin requests one-time permission to view a specific Super Admin's DMs."""
-    if effective_role(a) == 'super_admin':
-        raise HTTPException(400, 'Super Admins already have access')
-    handle = body.handle.strip().lstrip('#@')
-    target = await db.profiles.find_one({'handle': handle})
-    if not target:
-        raise HTTPException(404, 'User not found')
-    if effective_role(target) != 'super_admin':
-        raise HTTPException(400, 'DM-access requests are only needed for Super Admins')
-    existing = await db.dm_access.find_one({'requester_id': a['id'], 'target_id': target['id'], 'status': 'pending'})
-    if existing:
-        return {'ok': True, 'status': 'pending', 'id': existing['id']}
-    doc = {'id': str(uuid.uuid4()), 'requester_id': a['id'], 'requester_handle': a['handle'],
-           'requester_name': a['display_name'], 'target_id': target['id'], 'target_handle': target['handle'],
-           'status': 'pending', 'used': False, 'created_at': datetime.now(timezone.utc).isoformat()}
-    await db.dm_access.insert_one(dict(doc))
-    await add_activity(target['id'], 'dm_access_request', a, 'requested permission to view your DMs')
-    await audit(a, 'dm_access_request', target['handle'], '')
-    return {'ok': True, 'status': 'pending', 'id': doc['id']}
-
-
-@app.get('/api/admin/dm-access')
-async def dm_access_list(a: dict = Depends(require_admin)):
-    """Super Admin: requests targeting me. Co-Admin: my own requests."""
-    is_super = effective_role(a) == 'super_admin'
-    q = {'target_id': a['id']} if is_super else {'requester_id': a['id']}
-    out = []
-    async for r in db.dm_access.find(q, {'_id': 0}).sort('created_at', -1).limit(100):
-        out.append(r)
-    return {'as_super': is_super, 'allow_coadmin_dms': bool(a.get('allow_coadmin_dms')), 'requests': out}
-
-
-@app.post('/api/admin/dm-access/{req_id}/{decision}')
-async def dm_access_decide(req_id: str, decision: str, a: dict = Depends(require_admin)):
-    """Super Admin approves or denies a Co-Admin's DM-access request targeting them."""
-    if decision not in ('approve', 'deny'):
-        raise HTTPException(400, 'Invalid decision')
-    r = await db.dm_access.find_one({'id': req_id})
-    if not r:
-        raise HTTPException(404, 'Request not found')
-    if r['target_id'] != a['id']:
-        raise HTTPException(403, 'Only the Super Admin who was asked can decide this request')
-    new_status = 'approved' if decision == 'approve' else 'denied'
-    await db.dm_access.update_one({'id': req_id}, {'$set': {'status': new_status, 'used': False,
-                                                            'decided_at': datetime.now(timezone.utc).isoformat()}})
-    requester = await db.profiles.find_one({'id': r['requester_id']})
-    if requester:
-        await add_activity(requester['id'], 'dm_access_decision', a,
-                           f'{"approved" if decision == "approve" else "denied"} your DM-access request')
-    await audit(a, f'dm_access_{new_status}', r.get('requester_handle', ''), '')
-    return {'ok': True, 'status': new_status}
-
 
 
 @app.get('/api/admin/reports')
 async def admin_reports(status: str = 'open', a: dict = Depends(require_mod)):
-    q = {} if status == 'all' else {'status': status}
+    q: dict = {} if status == 'all' else ({'status': {'$in': ['open', 'assigned']}} if status == 'open'
+                                           else {'status': status})
+    if status == 'mine':
+        q = {'assigned.id': a['id'], 'status': {'$in': ['open', 'assigned']}}
+    if not is_full_admin(a):
+        q['category'] = {'$nin': list(SENSITIVE_REPORT_CATS)}
     out = []
     async for r in db.reports.find(q, {'_id': 0}).sort('created_at', -1).limit(100):
         target_user = await _resolve_target_user(r['target_type'], r['target_id'])
@@ -3657,19 +3630,56 @@ async def admin_reports(status: str = 'open', a: dict = Depends(require_mod)):
             p = await db.posts.find_one({'id': r['target_id']}, {'_id': 0})
             preview = {'text': (p.get('text') if p else '(deleted)'), 'media_url': p.get('media_url') if p else None,
                        'tier': p.get('tier') if p else None, 'quarantined': p.get('quarantined') if p else None}
+        elif r['target_type'] == 'message':
+            m = await db.dms.find_one({'id': r['target_id']}, {'_id': 0})
+            preview = {'text': (dec(m['content_enc']) if m and m.get('content_enc') else '(no text)') if m else '(deleted)',
+                       'media_url': m.get('media_url') if m else None}
         out.append({**r, 'target_user': {'handle': target_user['handle'], 'display_name': target_user['display_name']} if target_user else None,
                     'preview': preview})
     return out
 
+async def _report_for(report_id: str, a: dict) -> dict:
+    r = await db.reports.find_one({'id': report_id}, {'_id': 0})
+    if not r or (r.get('category') in SENSITIVE_REPORT_CATS and not is_full_admin(a)):
+        raise HTTPException(404, 'Report not found')
+    return r
+
+
+class AssignIn(BaseModel):
+    assign: bool = True
+
+
+@app.post('/api/admin/reports/{report_id}/assign')
+async def admin_report_assign(report_id: str, body: AssignIn, a: dict = Depends(require_mod)):
+    r = await _report_for(report_id, a)
+    if r['status'] not in ('open', 'assigned'):
+        raise HTTPException(400, 'This report is already resolved')
+    cur = r.get('assigned') or {}
+    if not body.assign and cur.get('id') not in (a['id'], None) and not is_full_admin(a):
+        raise HTTPException(403, 'Only the assignee or a Co-admin can release this report')
+    assigned = {'id': a['id'], 'handle': a['handle'], 'display_name': a.get('display_name'),
+                'at': datetime.now(timezone.utc).isoformat()} if body.assign else None
+    await db.reports.update_one({'id': report_id}, {'$set': {'assigned': assigned,
+                                                             'status': 'assigned' if body.assign else 'open'}})
+    target = await _resolve_target_user(r['target_type'], r['target_id'])
+    detail = f'report {report_id[:8]} ({r["category"]})' + (f'; took over from #{cur["handle"]}' if body.assign and cur.get('handle') and cur.get('id') != a['id'] else '')
+    await audit(a, 'report_assigned' if body.assign else 'report_released', (target or {}).get('handle', r['target_id']),
+                detail, restricted=r.get('category') in SENSITIVE_REPORT_CATS)
+    return {'ok': True, 'assigned': assigned}
+
+
 @app.post('/api/admin/reports/{report_id}/action')
 async def admin_action(report_id: str, body: ActionIn, a: dict = Depends(require_mod)):
-    r = await db.reports.find_one({'id': report_id})
-    if not r:
-        raise HTTPException(404, 'Report not found')
+    r = await _report_for(report_id, a)
+    if body.severe and not is_full_admin(a):
+        raise HTTPException(403, 'Only a Co-admin or Super admin can terminate an account')
+    sens = r.get('category') in SENSITIVE_REPORT_CATS
+    target = await _resolve_target_user(r['target_type'], r['target_id'])
+    th = (target or {}).get('handle', r['target_id'])
     result = {'action': body.action}
     if body.action == 'dismiss':
         await db.reports.update_one({'id': report_id}, {'$set': {'status': 'dismissed'}})
-        await audit(a, 'dismiss_report', report_id, body.reason or '')
+        await audit(a, 'dismiss_report', report_id, body.reason or '', restricted=sens)
     elif body.action == 'remove_content':
         if r['target_type'] == 'post':
             await db.posts.update_one({'id': r['target_id']}, {'$set': {'quarantined': True}})
@@ -3689,6 +3699,10 @@ async def admin_action(report_id: str, body: ActionIn, a: dict = Depends(require
         await db.reports.update_one({'id': report_id}, {'$set': {'status': 'upheld'}})
     else:
         raise HTTPException(400, 'Unknown action')
+    final = 'dismissed' if body.action == 'dismiss' else 'upheld'
+    await db.reports.update_one({'id': report_id}, {'$set': {
+        'resolution': final, 'resolved_by': a['handle'], 'resolved_at': datetime.now(timezone.utc).isoformat()}})
+    await audit(a, f'report_resolved_{final}', th, f'report {report_id[:8]} ({r["category"]}) via {body.action}', restricted=sens)
     return {'ok': True, **result}
 
 @app.get('/api/admin/csam')
@@ -3727,7 +3741,7 @@ async def admin_strike(handle: str, body: StrikeIn, a: dict = Depends(require_mo
     return {'ok': True, **await apply_strike(prof, body.reason, a, soft=(body.stage == 'soft'))}
 
 @app.post('/api/admin/users/{handle}/unsuspend')
-async def admin_unsuspend(handle: str, a: dict = Depends(require_mod)):
+async def admin_unsuspend(handle: str, a: dict = Depends(require_full_admin)):
     prof = await db.profiles.find_one({'handle': handle})
     if not prof:
         raise HTTPException(404, 'User not found')
@@ -3737,7 +3751,7 @@ async def admin_unsuspend(handle: str, a: dict = Depends(require_mod)):
     return {'ok': True}
 
 @app.post('/api/admin/users/{handle}/clear-strikes')
-async def admin_clear_strikes(handle: str, a: dict = Depends(require_admin)):
+async def admin_clear_strikes(handle: str, a: dict = Depends(require_full_admin)):
     """Rehabilitation / successful appeal: wipe strikes, upheld reports and safety flags.
     Intended for the '12 months of good behaviour' appeal. Super/Co-Admin only.
     Does NOT lift a zero-tolerance (no_appeal) termination."""
@@ -3754,108 +3768,31 @@ async def admin_clear_strikes(handle: str, a: dict = Depends(require_admin)):
     await audit(a, 'clear_strikes', handle, '')
     return {'ok': True}
 
-class AuditAccessRequest(BaseModel):
-    log: str
+# ----------------------------- Audit log (immutable, role-filtered) -----------------------------
+# Full admins (super_admin / co_admin) see every entry. Moderators see general actions
+# only — never investigation, DM, CSAM or NSFW entries. There is no edit/delete endpoint.
 
-
-async def _active_audit_grant(user_id: str, log_role: str) -> Optional[dict]:
-    return await db.audit_access.find_one(
-        {'requester_id': user_id, 'log_role': log_role, 'status': 'approved',
-         'expires_at': {'$gt': datetime.now(timezone.utc).isoformat()}}, {'_id': 0})
-
-
-async def _staff_with_role(role: str) -> list:
-    out = []
-    async for p in db.profiles.find({'$or': [{'role': role}, {'is_admin': True},
-                                             {'email': {'$in': list(ADMIN_EMAILS)}}]}, {'_id': 0}):
-        if audit_log_of(p) == role and (effective_role(p) or p.get('is_admin')):
-            out.append(p)
-    return out
+def _moderator_audit_filter() -> dict:
+    return {'restricted': {'$ne': True},
+            'action': {'$not': re.compile('^(' + '|'.join(re.escape(x) for x in RESTRICTED_AUDIT_PREFIXES) + ')')}}
 
 
 @app.get('/api/admin/audit')
-async def admin_audit(log: Optional[str] = None, a: dict = Depends(require_mod)):
-    """Role-separated audit logs. Staff see their own role's log; other logs need an approved 24h grant."""
-    mine = audit_log_of(a)
-    log = log or mine
-    if log not in AUDIT_LOGS:
-        raise HTTPException(400, 'Unknown audit log')
-    grant = None
-    if log != mine:
-        grant = await _active_audit_grant(a['id'], log)
-        if not grant:
-            raise HTTPException(403, 'Request access to view this audit log')
+async def admin_audit(q: str = '', action: str = '', limit: int = 200, a: dict = Depends(require_mod)):
+    full = is_full_admin(a)
+    query: dict = {} if full else _moderator_audit_filter()
+    conds = []
+    if q.strip():
+        rx = {'$regex': re.escape(q.strip().lstrip('#@')), '$options': 'i'}
+        conds.append({'$or': [{'admin_handle': rx}, {'target': rx}, {'detail': rx}]})
+    if action.strip():
+        conds.append({'action': {'$regex': '^' + re.escape(action.strip()), '$options': 'i'}})
+    if conds:
+        query = {'$and': [query, *conds]} if query else {'$and': conds}
     out = []
-    async for r in db.audit.find({'log_role': log}, {'_id': 0}).sort('created_at', -1).limit(100):
+    async for r in db.audit.find(query, {'_id': 0}).sort('created_at', -1).limit(max(1, min(limit, 500))):
         out.append(r)
-    if grant:
-        await audit(a, 'audit_log_view', log, f'viewed via grant {grant["id"]}', log_role=log)
-    return out
-
-
-@app.get('/api/admin/audit/access')
-async def audit_access_overview(a: dict = Depends(require_mod)):
-    mine = audit_log_of(a)
-    now = datetime.now(timezone.utc).isoformat()
-    incoming, outgoing = [], []
-    async for r in db.audit_access.find({'log_role': mine, 'status': 'pending'}, {'_id': 0}).sort('created_at', -1).limit(50):
-        incoming.append(r)
-    async for r in db.audit_access.find({'requester_id': a['id']}, {'_id': 0}).sort('created_at', -1).limit(50):
-        if r['status'] == 'approved' and r.get('expires_at', '') <= now:
-            r['status'] = 'expired'
-        outgoing.append(r)
-    granted = [r['log_role'] for r in outgoing if r['status'] == 'approved']
-    return {'my_log': mine, 'logs': list(AUDIT_LOGS), 'granted': sorted(set(granted)),
-            'incoming': incoming, 'outgoing': outgoing}
-
-
-@app.post('/api/admin/audit/access/request')
-async def audit_access_request(body: AuditAccessRequest, a: dict = Depends(require_mod)):
-    log = body.log
-    mine = audit_log_of(a)
-    if log not in AUDIT_LOGS:
-        raise HTTPException(400, 'Unknown audit log')
-    if log == mine:
-        raise HTTPException(400, 'You already have access to your own audit log')
-    if await _active_audit_grant(a['id'], log):
-        return {'ok': True, 'status': 'approved'}
-    existing = await db.audit_access.find_one({'requester_id': a['id'], 'log_role': log, 'status': 'pending'}, {'_id': 0})
-    if existing:
-        return {'ok': True, 'status': 'pending', 'id': existing['id']}
-    doc = {'id': str(uuid.uuid4()), 'requester_id': a['id'], 'requester_handle': a['handle'],
-           'requester_name': a.get('display_name', ''), 'requester_role': mine, 'log_role': log,
-           'status': 'pending', 'created_at': datetime.now(timezone.utc).isoformat()}
-    await db.audit_access.insert_one(dict(doc))
-    for p in await _staff_with_role(log):
-        await add_activity(p['id'], 'audit_access_request', a, f'requested access to the {log.replace("_", "-")} audit log')
-    await audit(a, 'audit_access_request', log, '')
-    return {'ok': True, 'status': 'pending', 'id': doc['id']}
-
-
-@app.post('/api/admin/audit/access/{req_id}/{decision}')
-async def audit_access_decide(req_id: str, decision: str, a: dict = Depends(require_mod)):
-    """Any staff member who owns the requested log can approve (24h access) or deny."""
-    if decision not in ('approve', 'deny'):
-        raise HTTPException(400, 'Invalid decision')
-    r = await db.audit_access.find_one({'id': req_id}, {'_id': 0})
-    if not r:
-        raise HTTPException(404, 'Request not found')
-    if r['log_role'] != audit_log_of(a):
-        raise HTTPException(403, 'Only staff who own this audit log can decide')
-    if r['requester_id'] == a['id']:
-        raise HTTPException(400, 'You cannot decide your own request')
-    if r['status'] != 'pending':
-        raise HTTPException(400, f'Request already {r["status"]}')
-    now = datetime.now(timezone.utc)
-    upd = {'status': 'approved' if decision == 'approve' else 'denied', 'decided_at': now.isoformat(),
-           'decided_by': a['handle']}
-    if decision == 'approve':
-        upd['expires_at'] = (now + timedelta(hours=AUDIT_GRANT_HOURS)).isoformat()
-    await db.audit_access.update_one({'id': req_id}, {'$set': upd})
-    await add_activity(r['requester_id'], 'audit_access_decision', a,
-                       f'{upd["status"]} your request to view the {r["log_role"].replace("_", "-")} audit log')
-    await audit(a, f'audit_access_{upd["status"]}', r.get('requester_handle', ''), r['log_role'])
-    return {'ok': True, **upd}
+    return {'scope': 'full' if full else 'general', 'entries': out}
 
 
 # ----------------------------- Admin: flag accounts & discreet DM review -----------------------------
@@ -3887,100 +3824,290 @@ async def admin_unflag(handle: str, a: dict = Depends(require_mod)):
     return {'ok': True, 'flagged': False}
 
 
-@app.get('/api/admin/dms/{handle}')
-async def admin_view_dms(handle: str, legal_basis: str = '', a: dict = Depends(sensitive_access_guard)):
-    """Discreet DM review for accounts flagged as suspicious. Server holds the DM
-    encryption key so messages are decrypted here for moderation. The reviewed user
-    is NOT notified; every access is written to the admin audit log for accountability.
-    Requires a stated legal basis + step-up secret (owner/co-admin only, rate-limited)."""
-    legal_basis = (legal_basis or '').strip()
-    if len(legal_basis) < 8:
-        raise HTTPException(400, 'A legal basis (min 8 chars) is required to open this account\'s DMs.')
-    prof = await db.profiles.find_one({'handle': handle})
+# ----------------------------- Investigations (Feed + DMs, PIN-protected) -----------------------------
+# Co-admins & Super admins only. Each sets a personal 6-digit PIN; unlocking returns a short-lived
+# session token (X-Inv-Session). Every case is private to its owner; colleagues must request access
+# per case. Every PIN attempt, search, FEED/DMS open and access decision is written to the audit log.
+
+INV_SESSION_MIN = 30
+INV_MAX_FAILS = 5
+INV_LOCK_MIN = 15
+
+
+class PinIn(BaseModel):
+    pin: str
+
+
+class HandleIn(BaseModel):
+    handle: str
+
+
+class RevokeIn(BaseModel):
+    admin_id: str
+
+
+def _valid_pin(pin: str) -> str:
+    pin = (pin or '').strip()
+    if not re.fullmatch(r'\d{6}', pin):
+        raise HTTPException(400, 'PIN must be exactly 6 digits')
+    return pin
+
+
+@app.get('/api/admin/investigations/status')
+async def inv_status(a: dict = Depends(require_full_admin)):
+    rec = await db.inv_pins.find_one({'admin_id': a['id']}, {'_id': 0})
+    now = datetime.now(timezone.utc).isoformat()
+    locked = rec.get('locked_until') if rec and (rec.get('locked_until') or '') > now else None
+    return {'has_pin': bool(rec and rec.get('hash')), 'locked_until': locked}
+
+
+@app.post('/api/admin/investigations/pin')
+async def inv_set_pin(body: PinIn, a: dict = Depends(require_full_admin)):
+    pin = _valid_pin(body.pin)
+    if await db.inv_pins.find_one({'admin_id': a['id'], 'hash': {'$exists': True}}):
+        raise HTTPException(400, 'You already have a PIN. Ask the Super admin to reset it.')
+    salt = secrets.token_hex(16)
+    await db.inv_pins.update_one({'admin_id': a['id']}, {'$set': {
+        'admin_id': a['id'], 'salt': salt, 'hash': _pw_hash(pin, salt), 'failed': 0,
+        'created_at': datetime.now(timezone.utc).isoformat()}, '$unset': {'locked_until': ''}}, upsert=True)
+    await audit(a, 'inv_pin_set', a['handle'], 'personal investigation PIN created', restricted=True)
+    return {'ok': True}
+
+
+@app.post('/api/admin/investigations/unlock')
+async def inv_unlock(body: PinIn, a: dict = Depends(require_full_admin)):
+    rec = await db.inv_pins.find_one({'admin_id': a['id']})
+    if not rec or not rec.get('hash'):
+        raise HTTPException(400, 'Set your PIN first')
+    now = datetime.now(timezone.utc)
+    if (rec.get('locked_until') or '') > now.isoformat():
+        await audit(a, 'inv_pin_blocked', a['handle'], 'attempt while locked out', restricted=True)
+        raise HTTPException(423, f'Investigations locked until {rec["locked_until"]}')
+    pin = (body.pin or '').strip()
+    if not hmac.compare_digest(_pw_hash(pin, rec['salt']), rec['hash']):
+        fails = rec.get('failed', 0) + 1
+        upd: dict = {'failed': fails}
+        await audit(a, 'inv_pin_failed', a['handle'], f'wrong PIN (attempt {fails}/{INV_MAX_FAILS})', restricted=True)
+        if fails >= INV_MAX_FAILS:
+            upd = {'failed': 0, 'locked_until': (now + timedelta(minutes=INV_LOCK_MIN)).isoformat()}
+            await audit(a, 'inv_lockout', a['handle'], f'locked for {INV_LOCK_MIN} min after {INV_MAX_FAILS} wrong PINs', restricted=True)
+        await db.inv_pins.update_one({'admin_id': a['id']}, {'$set': upd})
+        if fails >= INV_MAX_FAILS:
+            raise HTTPException(423, f'Too many wrong PINs. Investigations locked for {INV_LOCK_MIN} minutes.')
+        raise HTTPException(403, f'Wrong PIN. {INV_MAX_FAILS - fails} attempt(s) left.')
+    token = secrets.token_urlsafe(32)
+    expires = (now + timedelta(minutes=INV_SESSION_MIN)).isoformat()
+    await db.inv_pins.update_one({'admin_id': a['id']}, {'$set': {'failed': 0}, '$unset': {'locked_until': ''}})
+    await db.inv_sessions.insert_one({'token_hash': hashlib.sha256(token.encode()).hexdigest(),
+                                      'admin_id': a['id'], 'expires_at': expires, 'created_at': now.isoformat()})
+    await audit(a, 'inv_pin_success', a['handle'], 'investigation session opened', restricted=True)
+    return {'token': token, 'expires_at': expires}
+
+
+@app.post('/api/admin/investigations/pin/reset')
+async def inv_reset_pin(body: HandleIn, a: dict = Depends(require_super)):
+    target = await db.profiles.find_one({'handle': body.handle.strip().lstrip('#@')}, {'_id': 0})
+    if not target:
+        raise HTTPException(404, 'User not found')
+    await db.inv_pins.delete_one({'admin_id': target['id']})
+    await db.inv_sessions.delete_many({'admin_id': target['id']})
+    await audit(a, 'inv_pin_reset', target['handle'], 'PIN reset by Super admin', restricted=True)
+    return {'ok': True}
+
+
+async def require_inv_session(a: dict = Depends(require_full_admin),
+                              x_inv_session: Optional[str] = Header(None)) -> dict:
+    if not x_inv_session:
+        raise HTTPException(401, 'Enter your Investigations PIN')
+    s = await db.inv_sessions.find_one({'token_hash': hashlib.sha256(x_inv_session.encode()).hexdigest(),
+                                        'admin_id': a['id']})
+    if not s or s['expires_at'] <= datetime.now(timezone.utc).isoformat():
+        raise HTTPException(401, 'Investigation session expired. Enter your PIN again.')
+    return a
+
+
+@app.post('/api/admin/investigations/lock')
+async def inv_lock(a: dict = Depends(require_full_admin), x_inv_session: Optional[str] = Header(None)):
+    if x_inv_session:
+        await db.inv_sessions.delete_one({'token_hash': hashlib.sha256(x_inv_session.encode()).hexdigest()})
+    await audit(a, 'inv_session_closed', a['handle'], '', restricted=True)
+    return {'ok': True}
+
+
+def _case_access(case: dict, uid: str) -> bool:
+    return case['owner_id'] == uid or any(g['admin_id'] == uid for g in case.get('grants', []))
+
+
+async def _inv_subject(handle: str, a: dict) -> dict:
+    prof = await db.profiles.find_one({'handle': (handle or '').strip().lstrip('#@')}, {'_id': 0})
     if not prof:
         raise HTTPException(404, 'User not found')
-    if not await super_dm_access_ok(a, prof):
-        raise HTTPException(403, "This is a Super Admin's account. You need their permission to view these DMs — send a request from the DM Access tab.")
-    if not prof.get('flagged'):
-        raise HTTPException(403, 'Account must be flagged for suspicious activity before DMs can be reviewed')
+    if effective_role(prof) == 'super_admin' and effective_role(a) != 'super_admin':
+        raise HTTPException(403, 'Only a Super admin can investigate a Super admin account')
+    return prof
 
-    threads: dict[str, list] = {}
-    async for m in db.dms.find({'participants': prof['id']}).sort('created_at', 1):
-        peer = next((pid for pid in m['participants'] if pid != prof['id']), prof['id'])
+
+async def _case_view(case: Optional[dict], uid: str) -> Optional[dict]:
+    if not case:
+        return None
+    req = await db.inv_requests.find_one({'case_id': case['id'], 'requester_id': uid}, {'_id': 0},
+                                         sort=[('created_at', -1)])
+    mine = case['owner_id'] == uid
+    return {'id': case['id'], 'subject_handle': case['subject_handle'], 'subject_name': case.get('subject_name'),
+            'owner_handle': case['owner_handle'], 'mine': mine, 'has_access': _case_access(case, uid),
+            'reason': case.get('reason') if _case_access(case, uid) else None,
+            'grants': case.get('grants', []) if mine else [],
+            'request_status': req['status'] if req else None,
+            'created_at': case['created_at'], 'last_opened_at': case.get('last_opened_at')}
+
+
+@app.get('/api/admin/investigations/search')
+async def inv_search(handle: str, a: dict = Depends(require_inv_session)):
+    prof = await _inv_subject(handle, a)
+    case = await db.inv_cases.find_one({'subject_id': prof['id'], 'status': 'open'}, {'_id': 0})
+    await audit(a, 'inv_handle_search', prof['handle'], 'case exists' if case else 'no open case', restricted=True)
+    return {'subject': {'handle': prof['handle'], 'display_name': prof['display_name'],
+                        'avatar_url': prof.get('avatar_url'), 'account_type': acct_type(prof),
+                        'flagged': bool(prof.get('flagged')), 'watchlisted': bool(prof.get('watchlisted')),
+                        'banned': bool(prof.get('banned')), 'is_minor': bool(prof.get('is_minor'))},
+            'case': await _case_view(case, a['id'])}
+
+
+async def _open_case(prof: dict, a: dict, reason: str, kind: str) -> dict:
+    now = datetime.now(timezone.utc).isoformat()
+    case = await db.inv_cases.find_one({'subject_id': prof['id'], 'status': 'open'}, {'_id': 0})
+    if case and not _case_access(case, a['id']):
+        await audit(a, f'inv_{kind}_denied', prof['handle'], f'case owned by #{case["owner_handle"]}', restricted=True)
+        raise HTTPException(403, f'This person is in #{case["owner_handle"]}\'s private case list. Request access first.')
+    if not case:
+        case = {'id': str(uuid.uuid4()), 'owner_id': a['id'], 'owner_handle': a['handle'],
+                'subject_id': prof['id'], 'subject_handle': prof['handle'], 'subject_name': prof['display_name'],
+                'reason': (reason or '').strip()[:300], 'status': 'open', 'grants': [], 'created_at': now}
+        await db.inv_cases.insert_one(dict(case))
+        await audit(a, 'inv_case_opened', prof['handle'], case['reason'] or 'no reason given', restricted=True)
+    await db.inv_cases.update_one({'id': case['id']}, {'$set': {'last_opened_at': now}})
+    return case
+
+
+@app.get('/api/admin/investigations/{handle}/feed')
+async def inv_feed(handle: str, reason: str = '', a: dict = Depends(require_inv_session)):
+    prof = await _inv_subject(handle, a)
+    case = await _open_case(prof, a, reason, 'feed')
+    posts = []
+    async for p in db.posts.find({'author_id': prof['id']}, {'_id': 0}).sort('created_at', -1).limit(500):
+        posts.append({'id': p['id'], 'tier': p.get('tier'), 'text': p.get('text', ''),
+                      'media_url': p.get('media_url'), 'media_type': p.get('media_type'),
+                      'nsfw': bool(p.get('nsfw')), 'quarantined': bool(p.get('quarantined')),
+                      'ai_label': p.get('ai_label', 'none'), 'created_at': p.get('created_at')})
+    tiers: dict = {}
+    for p in posts:
+        tiers[p['tier'] or 'unknown'] = tiers.get(p['tier'] or 'unknown', 0) + 1
+    await audit(a, 'inv_feed_open', prof['handle'], f'case {case["id"][:8]}; {len(posts)} post(s) across {len(tiers)} tier(s)', restricted=True)
+    return {'subject': {'handle': prof['handle'], 'display_name': prof['display_name']},
+            'case_id': case['id'], 'tiers': tiers, 'posts': posts}
+
+
+@app.get('/api/admin/investigations/{handle}/dms')
+async def inv_dms(handle: str, reason: str = '', a: dict = Depends(require_inv_session)):
+    prof = await _inv_subject(handle, a)
+    case = await _open_case(prof, a, reason, 'dms')
+    uid = prof['id']
+    threads: dict = {}
+    async for m in db.dms.find({'participants': uid}).sort('created_at', 1):
+        peer = next((pid for pid in m['participants'] if pid != uid), uid)
         threads.setdefault(peer, []).append({
-            'sender_id': m['sender_id'], 'text': dec(m['content_enc']),
-            'created_at': m['created_at'], 'from_flagged': m['sender_id'] == prof['id']})
-
+            'from_subject': m['sender_id'] == uid,
+            'text': dec(m['content_enc']) if m.get('content_enc') else '',
+            'media_url': m.get('media_url'), 'media_type': m.get('media_type'),
+            'view_once': bool(m.get('view_once')), 'deleted': bool(m.get('deleted')),
+            'created_at': m['created_at']})
     out = []
     for peer_id, msgs in threads.items():
         peer = await db.profiles.find_one({'id': peer_id}, {'_id': 0})
         out.append({'peer': {'handle': peer['handle'], 'display_name': peer['display_name']} if peer else {'handle': 'unknown', 'display_name': 'Unknown'},
                     'messages': msgs})
     out.sort(key=lambda t: t['messages'][-1]['created_at'] if t['messages'] else '', reverse=True)
-
-    await audit(a, 'view_dms', handle, f'legal_basis="{legal_basis[:200]}"; reviewed {len(out)} thread(s)')
-    return {'user': {'handle': prof['handle'], 'display_name': prof['display_name'],
-                     'flag_reason': prof.get('flag_reason'), 'flagged_by': prof.get('flagged_by')},
-            'threads': out}
+    await audit(a, 'inv_dms_open', prof['handle'], f'case {case["id"][:8]}; {len(out)} DM thread(s)', restricted=True)
+    return {'subject': {'handle': prof['handle'], 'display_name': prof['display_name']},
+            'case_id': case['id'], 'threads': out}
 
 
-@app.get('/api/admin/investigate/{handle}')
-async def admin_investigate(handle: str, legal_basis: str = '', a: dict = Depends(sensitive_access_guard)):
-    """SILENT INVESTIGATION — lawful, warrant-based inspection of an account (UK IPA / court order).
-    Returns the subject's posts (all tiers), private DMs (decrypted, incl. media) and group
-    memberships WITHOUT notifying them. Permitted only when the account is on the Watchlist or
-    Flagged (i.e. a documented basis exists). Requires a stated legal basis + step-up secret
-    (owner/co-admin only, rate-limited). EVERY access is written to the immutable admin audit log."""
-    legal_basis = (legal_basis or '').strip()
-    if len(legal_basis) < 8:
-        raise HTTPException(400, 'A legal basis (min 8 chars) is required to run a silent investigation.')
-    prof = await db.profiles.find_one({'handle': handle})
-    if not prof:
-        raise HTTPException(404, 'User not found')
-    if not await super_dm_access_ok(a, prof):
-        raise HTTPException(403, "This is a Super Admin's account. You need their permission to investigate — send a request from the DM Access tab.")
-    if not (prof.get('flagged') or prof.get('watchlisted')):
-        raise HTTPException(403, 'Subject must be Watchlisted or Flagged (documented basis) before a silent investigation can run')
-    uid = prof['id']
-
-    posts = []
-    async for p in db.posts.find({'author_id': uid}).sort('created_at', -1).limit(500):
-        posts.append({'id': p['id'], 'tier': p.get('tier'), 'text': p.get('text', ''),
-                      'media_url': p.get('media_url'), 'media_type': p.get('media_type'),
-                      'ai_label': p.get('ai_label', 'none'), 'created_at': p.get('created_at')})
-
-    threads: dict[str, list] = {}
-    async for m in db.dms.find({'participants': uid}).sort('created_at', 1):
-        peer = next((pid for pid in m['participants'] if pid != uid), uid)
-        threads.setdefault(peer, []).append({
-            'sender_id': m['sender_id'], 'from_subject': m['sender_id'] == uid,
-            'text': dec(m['content_enc']),
-            'media_url': m.get('media_url'), 'media_type': m.get('media_type'),
-            'view_once': bool(m.get('view_once')), 'deleted': bool(m.get('deleted')),
-            'created_at': m['created_at']})
-    dms = []
-    for peer_id, msgs in threads.items():
-        peer = await db.profiles.find_one({'id': peer_id}, {'_id': 0})
-        dms.append({'peer': {'handle': peer['handle'], 'display_name': peer['display_name']} if peer else {'handle': 'unknown', 'display_name': 'Unknown'},
-                    'messages': msgs})
-    dms.sort(key=lambda t: t['messages'][-1]['created_at'] if t['messages'] else '', reverse=True)
-
-    groups = []
-    async for g in db.groups.find({'members': uid}):
-        groups.append({'id': g.get('id'), 'name': g.get('name'),
-                       'member_count': len(g.get('members', [])),
-                       'is_owner': g.get('owner_id') == uid, 'created_at': g.get('created_at')})
-
-    await audit(a, 'silent_investigation', handle,
-                f'legal_basis="{legal_basis[:200]}"; inspected {len(posts)} posts, {len(dms)} DM thread(s), {len(groups)} group(s)')
-    return {'subject': {'handle': prof['handle'], 'display_name': prof['display_name'],
-                        'email': prof.get('email'), 'is_minor': bool(prof.get('is_minor')),
-                        'flagged': bool(prof.get('flagged')), 'flag_reason': prof.get('flag_reason'),
-                        'watchlisted': bool(prof.get('watchlisted')), 'watch_reason': prof.get('watch_reason')},
-            'posts': posts, 'dms': dms, 'groups': groups,
-            'legal_notice': 'Accessed under lawful basis. This access is recorded in the admin audit log.'}
+@app.get('/api/admin/investigations/cases')
+async def inv_cases(a: dict = Depends(require_inv_session)):
+    mine, shared = [], []
+    async for c in db.inv_cases.find({'owner_id': a['id'], 'status': 'open'}, {'_id': 0}).sort('created_at', -1):
+        mine.append(await _case_view(c, a['id']))
+    async for c in db.inv_cases.find({'grants.admin_id': a['id'], 'status': 'open'}, {'_id': 0}).sort('created_at', -1):
+        shared.append(await _case_view(c, a['id']))
+    incoming = [r async for r in db.inv_requests.find({'owner_id': a['id'], 'status': 'pending'}, {'_id': 0}).sort('created_at', -1)]
+    outgoing = [r async for r in db.inv_requests.find({'requester_id': a['id']}, {'_id': 0}).sort('created_at', -1).limit(50)]
+    return {'mine': mine, 'shared': shared, 'incoming': incoming, 'outgoing': outgoing}
 
 
+@app.post('/api/admin/investigations/cases/{case_id}/request')
+async def inv_request_access(case_id: str, a: dict = Depends(require_inv_session)):
+    case = await db.inv_cases.find_one({'id': case_id, 'status': 'open'}, {'_id': 0})
+    if not case:
+        raise HTTPException(404, 'Case not found')
+    if _case_access(case, a['id']):
+        return {'ok': True, 'status': 'approved'}
+    existing = await db.inv_requests.find_one({'case_id': case_id, 'requester_id': a['id'], 'status': 'pending'}, {'_id': 0})
+    if existing:
+        return {'ok': True, 'status': 'pending', 'id': existing['id']}
+    doc = {'id': str(uuid.uuid4()), 'case_id': case_id, 'subject_handle': case['subject_handle'],
+           'owner_id': case['owner_id'], 'owner_handle': case['owner_handle'],
+           'requester_id': a['id'], 'requester_handle': a['handle'], 'status': 'pending',
+           'created_at': datetime.now(timezone.utc).isoformat()}
+    await db.inv_requests.insert_one(dict(doc))
+    await audit(a, 'inv_access_request', case['subject_handle'], f'asked #{case["owner_handle"]} for case {case_id[:8]}', restricted=True)
+    return {'ok': True, 'status': 'pending', 'id': doc['id']}
+
+
+@app.post('/api/admin/investigations/requests/{req_id}/{decision}')
+async def inv_decide(req_id: str, decision: str, a: dict = Depends(require_inv_session)):
+    if decision not in ('approve', 'decline'):
+        raise HTTPException(400, 'Invalid decision')
+    r = await db.inv_requests.find_one({'id': req_id}, {'_id': 0})
+    if not r:
+        raise HTTPException(404, 'Request not found')
+    if r['owner_id'] != a['id']:
+        raise HTTPException(403, 'Only the case owner can decide')
+    if r['status'] != 'pending':
+        raise HTTPException(400, f'Request already {r["status"]}')
+    status = 'approved' if decision == 'approve' else 'declined'
+    now = datetime.now(timezone.utc).isoformat()
+    await db.inv_requests.update_one({'id': req_id}, {'$set': {'status': status, 'decided_at': now}})
+    if status == 'approved':
+        await db.inv_cases.update_one({'id': r['case_id']}, {'$push': {'grants': {
+            'admin_id': r['requester_id'], 'handle': r['requester_handle'], 'at': now}}})
+    await audit(a, f'inv_access_{status}', r['subject_handle'], f'#{r["requester_handle"]} · case {r["case_id"][:8]}', restricted=True)
+    return {'ok': True, 'status': status}
+
+
+@app.post('/api/admin/investigations/cases/{case_id}/revoke')
+async def inv_revoke(case_id: str, body: RevokeIn, a: dict = Depends(require_inv_session)):
+    case = await db.inv_cases.find_one({'id': case_id}, {'_id': 0})
+    if not case or case['owner_id'] != a['id']:
+        raise HTTPException(403, 'Only the case owner can revoke access')
+    g = next((g for g in case.get('grants', []) if g['admin_id'] == body.admin_id), None)
+    if not g:
+        raise HTTPException(404, 'No such grant')
+    await db.inv_cases.update_one({'id': case_id}, {'$pull': {'grants': {'admin_id': body.admin_id}}})
+    await db.inv_requests.update_many({'case_id': case_id, 'requester_id': body.admin_id, 'status': 'approved'},
+                                      {'$set': {'status': 'revoked'}})
+    await audit(a, 'inv_access_revoked', case['subject_handle'], f'#{g["handle"]} · case {case_id[:8]}', restricted=True)
+    return {'ok': True}
+
+
+@app.post('/api/admin/investigations/cases/{case_id}/close')
+async def inv_close(case_id: str, a: dict = Depends(require_inv_session)):
+    case = await db.inv_cases.find_one({'id': case_id}, {'_id': 0})
+    if not case or case['owner_id'] != a['id']:
+        raise HTTPException(403, 'Only the case owner can close this case')
+    await db.inv_cases.update_one({'id': case_id}, {'$set': {'status': 'closed', 'closed_at': datetime.now(timezone.utc).isoformat()}})
+    await db.inv_requests.update_many({'case_id': case_id, 'status': 'pending'}, {'$set': {'status': 'declined'}})
+    await audit(a, 'inv_case_closed', case['subject_handle'], f'case {case_id[:8]}', restricted=True)
+    return {'ok': True}
 
 
 # ----------------------------- Phase 6: Admin+ & Safety -----------------------------
@@ -3996,7 +4123,7 @@ class NsfwResolve(BaseModel):
 
 
 @app.get('/api/admin/nsfw')
-async def admin_nsfw_queue(status: str = 'open', a: dict = Depends(require_mod)):
+async def admin_nsfw_queue(status: str = 'open', a: dict = Depends(require_full_admin)):
     """AI-flagged media awaiting review."""
     q = {} if status == 'all' else {'status': status}
     out = []
@@ -4006,7 +4133,7 @@ async def admin_nsfw_queue(status: str = 'open', a: dict = Depends(require_mod))
 
 
 @app.post('/api/admin/nsfw/{item_id}/resolve')
-async def admin_nsfw_resolve(item_id: str, body: NsfwResolve, a: dict = Depends(require_mod)):
+async def admin_nsfw_resolve(item_id: str, body: NsfwResolve, a: dict = Depends(require_full_admin)):
     item = await db.nsfw_queue.find_one({'id': item_id})
     if not item:
         raise HTTPException(404, 'Item not found')

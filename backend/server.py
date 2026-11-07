@@ -740,7 +740,7 @@ class PostCreate(BaseModel):
     ai_label: Optional[str] = 'none'  # none | generated | assisted | altered
     allow_download: Optional[bool] = True  # poster can block downloads (only public posts are ever downloadable)
     spoiler: Optional[bool] = False        # media blurred until the viewer taps to reveal
-    watermark: Optional[bool] = False      # creators only: downloads of the photos carry '@handle on Skali'
+    watermark: Optional[bool] = False      # creators only: downloaded photos carry '#handle-Skali'
 
 class ReactBody(BaseModel):
     emoji: str  # like | love | haha | wow | sad | angry
@@ -2117,8 +2117,8 @@ async def _read_media_bytes(url: str) -> tuple:
 
 @app.get('/api/posts/{post_id}/download/{index}')
 async def download_post_media(post_id: str, index: int, u: dict = Depends(get_current_user)):
-    """Download one media item of a public post. If the creator turned on watermarking, other
-    people get a copy stamped '@handle on Skali'; the creator always gets their clean original."""
+    """Download one media item of a public post. If the creator turned on watermarking, every
+    downloaded photo (the creator's own included) is stamped '#handle-Skali' in a bottom corner."""
     p = await db.posts.find_one({'id': post_id})
     if not p:
         raise HTTPException(404, 'Post not found')
@@ -2135,11 +2135,11 @@ async def download_post_media(post_id: str, index: int, u: dict = Depends(get_cu
         raise
     except Exception:
         raise HTTPException(404, 'Media not found')
-    if p.get('watermark') and p['author_id'] != u['id'] and item.get('type') == 'image':
+    if p.get('watermark') and item.get('type') == 'image':
         author = await db.profiles.find_one({'id': p['author_id']})
         handle = (author or {}).get('handle') or 'skali'
         try:
-            data, ct = await asyncio.to_thread(_stamp_watermark, data, f'@{handle} on Skali')
+            data, ct = await asyncio.to_thread(_stamp_watermark, data, f'#{handle}-Skali')
         except Exception as e:
             log.info(f'watermark failed for post {post_id}: {e}')
             raise HTTPException(422, 'Could not prepare this image for download')

@@ -18,10 +18,19 @@ const toBase64 = (blob: Blob) => new Promise<string>((res, rej) => {
 })
 
 // Saves a media file to the device. Returns a short message for the user.
-export async function downloadMedia(url: string, type: string): Promise<string> {
-  const name = fileName(url, type)
+const BLOB_EXT: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' }
+
+// `getBlob` lets the caller supply the file itself (e.g. a watermarked copy from the backend).
+export async function downloadMedia(url: string, type: string, getBlob?: () => Promise<Blob>): Promise<string> {
+  let supplied: Blob | null = null
+  let name = fileName(url, type)
+  if (getBlob) {
+    supplied = await getBlob()
+    const ext = BLOB_EXT[supplied.type]
+    if (ext) name = name.replace(/\.[a-z0-9]{2,5}$/i, '') + '.' + ext
+  }
   if (Capacitor.isNativePlatform()) {
-    const data = await toBase64(await (await fetch(url)).blob())
+    const data = await toBase64(supplied ?? await (await fetch(url)).blob())
     try {
       await Filesystem.writeFile({ path: `Skali/${name}`, data, directory: Directory.Documents, recursive: true })
       return 'Saved to Documents/Skali'
@@ -32,7 +41,7 @@ export async function downloadMedia(url: string, type: string): Promise<string> 
     }
   }
   try {
-    const blob = await (await fetch(url, { mode: 'cors' })).blob()
+    const blob = supplied ?? await (await fetch(url, { mode: 'cors' })).blob()
     const href = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = href; a.download = name

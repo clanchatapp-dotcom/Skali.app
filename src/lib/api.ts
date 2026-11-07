@@ -1022,6 +1022,30 @@ export const api = {
       headers: stepUpHeaders(),
     }),
 
+  setPostWatermark: (id: string, enabled: boolean) =>
+    req(`/posts/${id}/watermark`, { method: 'PUT', body: j({ enabled }) }),
+
+  // Fetches a post's media through the backend (watermarked for non-authors when the creator turned it on).
+  downloadPostMedia: async (id: string, index: number): Promise<Blob> => {
+    const token = getToken()
+    const headers: Record<string, string> = {}
+    if (token) headers['Authorization'] = `Bearer ${token}`
+    const r = await fetch(`${API_BASE}/api/posts/${id}/download/${index}`, { headers })
+    if (!r.ok) {
+      let m = 'Download failed'
+      try { m = (await r.json()).detail || m } catch { /* keep default */ }
+      throw new Error(m)
+    }
+    return r.blob()
+  },
+
+  adminCsamVote: (id: string, verdict: 'yes' | 'no') =>
+    req(`/admin/csam/${id}/vote`, {
+      method: 'POST',
+      headers: stepUpHeaders(),
+      body: j({ verdict }),
+    }),
+
   // Stories — Instagram-style, 24h expiry
   stories: () => req('/stories'),
 

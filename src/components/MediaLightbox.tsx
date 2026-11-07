@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { X, ChevronLeft, ChevronRight } from 'lucide-react'
+import { DownloadButton } from './MediaTools'
 
 type Item = { url: string; type: string }
 
@@ -8,7 +10,7 @@ type Item = { url: string; type: string }
 //  - swipe DOWN to dismiss
 //  - swipe LEFT/RIGHT (or arrows) to move between a person's photos/videos
 //  - pinch-to-zoom + drag-to-pan on photos (double-tap toggles 2x)
-export default function MediaLightbox({ items, index = 0, onClose }: { items: Item[]; index?: number; onClose: () => void }) {
+export default function MediaLightbox({ items, index = 0, onClose, canDownload = false }: { items: Item[]; index?: number; onClose: () => void; canDownload?: boolean }) {
   const [idx, setIdx] = useState(index)
   const [scale, setScale] = useState(1)
   const [tx, setTx] = useState(0)
@@ -88,13 +90,19 @@ export default function MediaLightbox({ items, index = 0, onClose }: { items: It
 
   const fade = (g.current.mode === 'swipe' && scale === 1) ? Math.max(0.2, 1 - Math.abs(ty) / 450) : 1
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-[90] grid place-items-center"
       style={{ background: `rgba(0,0,0,${0.96 * fade})` }}
       onClick={onClose}
+      onContextMenu={canDownload ? undefined : e => e.preventDefault()}
       data-testid="media-lightbox"
     >
+      {canDownload && (
+        <div className="absolute right-16 top-[calc(0.75rem+env(safe-area-inset-top))] z-20" onClick={e => e.stopPropagation()}>
+          <DownloadButton url={cur.url} type={cur.type} testId="lightbox-download" className="h-10" label />
+        </div>
+      )}
       <button
         onClick={(e) => { e.stopPropagation(); onClose() }}
         data-testid="lightbox-close"
@@ -127,7 +135,7 @@ export default function MediaLightbox({ items, index = 0, onClose }: { items: It
         style={{ transform: `translate(${tx}px, ${ty}px) scale(${scale})`, transition: dragging ? 'none' : 'transform .2s ease' }}
       >
         {cur.type === 'video'
-          ? <video src={cur.url} controls autoPlay playsInline className="max-h-[85vh] max-w-[92vw] rounded-lg" />
+          ? <video src={cur.url} controls autoPlay playsInline controlsList={canDownload ? undefined : 'nodownload'} className="max-h-[85vh] max-w-[92vw] rounded-lg" />
           : <img src={cur.url} draggable={false} className="max-h-[85vh] max-w-[92vw] rounded-lg object-contain" />}
       </div>
 
@@ -136,6 +144,7 @@ export default function MediaLightbox({ items, index = 0, onClose }: { items: It
           {items.map((_, i) => <span key={i} className={`h-1.5 rounded-full transition-all ${i === idx ? 'w-4 bg-white' : 'w-1.5 bg-white/40'}`} />)}
         </div>
       )}
-    </div>
+    </div>,
+    document.body
   )
 }

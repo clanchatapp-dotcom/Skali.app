@@ -1,86 +1,72 @@
 import { useEffect, useState } from 'react'
 import { api } from '../lib/api'
-import { timeAgo } from '../lib/ui'
-import { ScrollText, Lock, Check, X, Clock, Loader2 } from 'lucide-react'
+import { ScrollText, Lock, Loader2, Search, ShieldCheck } from 'lucide-react'
+import { ROLE_META } from './RoleBadge'
 
-const LOG_LABEL: Record<string, string> = { super_admin: 'Super Admin', co_admin: 'Co-Admin', moderator: 'Moderator' }
+const FILTERS = [
+  { key: '', label: 'All' },
+  { key: 'report_', label: 'Reports' },
+  { key: 'strike', label: 'Strikes' },
+  { key: 'inv_', label: 'Investigations', full: true },
+  { key: 'assign_role', label: 'Roles' },
+]
 
-function LogTab({ log, access, active, onSelect, onRequest }: any) {
-  const mine = log === access.my_log
-  const granted = access.granted.includes(log)
-  const pending = access.outgoing.some((r: any) => r.log_role === log && r.status === 'pending')
-  const open = mine || granted
+const exact = (iso: string) => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'medium' })
+
+function Entry({ r }: { r: any }) {
   return (
-    <button data-testid={`audit-log-tab-${log}`} onClick={() => (open ? onSelect(log) : !pending && onRequest(log))}
-      className={`px-3 py-2 rounded-xl text-sm flex items-center gap-1.5 border transition-colors ${active ? 'bg-brand/20 border-brand text-white' : 'bg-panel border-edge text-slate-300 hover:border-brand/50'}`}>
-      {!open && <Lock className="h-3.5 w-3.5" />}
-      {LOG_LABEL[log]}{mine && <span className="text-[10px] text-slate-400">(yours)</span>}
-      {!open && <span className="text-[11px] text-slate-500">{pending ? '· pending' : '· request access'}</span>}
-      {granted && !mine && <span className="text-[11px] text-emerald-300">· 24h access</span>}
-    </button>
-  )
-}
-
-function IncomingRequests({ items, onDecide }: { items: any[]; onDecide: (id: string, d: 'approve' | 'deny') => void }) {
-  if (!items.length) return null
-  return (
-    <div className="bg-panel border border-amber-500/30 rounded-2xl p-3 space-y-2" data-testid="audit-incoming-requests">
-      <div className="text-xs text-amber-300">Access requests for your log (approving grants 24 hours)</div>
-      {items.map(r => (
-        <div key={r.id} className="flex items-center gap-2 text-sm" data-testid={`audit-request-${r.id}`}>
-          <span className="flex-1">#{r.requester_handle} <span className="text-slate-500">({LOG_LABEL[r.requester_role] || r.requester_role}) · {timeAgo(r.created_at)}</span></span>
-          <button data-testid={`audit-approve-${r.id}`} onClick={() => onDecide(r.id, 'approve')} className="px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-300 text-xs flex items-center gap-1"><Check className="h-3 w-3" />Approve</button>
-          <button data-testid={`audit-deny-${r.id}`} onClick={() => onDecide(r.id, 'deny')} className="px-2.5 py-1 rounded-lg bg-rose-500/15 text-rose-300 text-xs flex items-center gap-1"><X className="h-3 w-3" />Deny</button>
-        </div>
-      ))}
+    <div className={`bg-panel border rounded-2xl p-3 text-sm flex items-start gap-3 ${r.restricted ? 'border-rose-500/30' : 'border-edge'}`} data-testid="audit-entry">
+      {r.restricted ? <Lock className="h-4 w-4 text-rose-300 mt-0.5 shrink-0" /> : <ScrollText className="h-4 w-4 text-slate-500 mt-0.5 shrink-0" />}
+      <div className="flex-1 min-w-0 break-words">
+        <span className="font-medium">#{r.admin_handle}</span>
+        {r.admin_role && <span className={`text-[10px] ml-1 ${ROLE_META[r.admin_role]?.color || 'text-slate-500'}`}>{ROLE_META[r.admin_role]?.label}</span>}
+        {' '}<span className="text-brand font-mono text-xs">{r.action}</span>
+        {r.target && <span className="text-slate-300"> → {r.target}</span>}
+        {r.detail && <div className="text-slate-500 text-xs mt-0.5">{r.detail}</div>}
+      </div>
+      <span className="text-[11px] text-slate-500 shrink-0 text-right tabular-nums">{exact(r.created_at)}</span>
     </div>
   )
 }
 
 export default function AuditPanel() {
-  const [access, setAccess] = useState<any>(null)
-  const [log, setLog] = useState('')
-  const [rows, setRows] = useState<any[]>([])
+  const [q, setQ] = useState('')
+  const [action, setAction] = useState('')
+  const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
 
-  const loadAccess = async () => {
-    const a = await api.adminAuditAccess()
-    setAccess(a)
-    return a
-  }
-  const loadRows = async (l: string) => {
+  const load = async (act = action) => {
     setLoading(true)
-    try { setRows(await api.adminAudit(l)) } catch (e: any) { setRows([]); alert(e.message) } finally { setLoading(false) }
+    try { setData(await api.adminAudit(q.trim(), act)) } catch (e: any) { alert(e.message); setData(null) }
+    setLoading(false)
   }
-  useEffect(() => { loadAccess().then(a => { setLog(a.my_log); loadRows(a.my_log) }).catch(() => setLoading(false)) }, [])
+  useEffect(() => { load() }, [])
+  const full = data?.scope === 'full'
 
-  const select = (l: string) => { setLog(l); loadRows(l) }
-  const request = async (l: string) => {
-    if (!window.confirm(`Request 24-hour access to the ${LOG_LABEL[l]} audit log? Their team will be notified.`)) return
-    try { await api.adminAuditRequest(l); await loadAccess() } catch (e: any) { alert(e.message) }
-  }
-  const decide = async (id: string, d: 'approve' | 'deny') => {
-    try { await api.adminAuditDecide(id, d); await loadAccess() } catch (e: any) { alert(e.message) }
-  }
-
-  if (!access) return loading ? <Loader2 className="h-5 w-5 animate-spin text-slate-500" /> : <p className="text-sm text-slate-500">Could not load audit logs.</p>
   return (
     <div className="space-y-3" data-testid="audit-panel">
-      <div className="flex flex-wrap gap-2">
-        {access.logs.map((l: string) => <LogTab key={l} log={l} access={access} active={l === log} onSelect={select} onRequest={request} />)}
+      <div className="bg-panel border border-edge rounded-2xl p-3 text-xs text-slate-400 flex items-start gap-2">
+        <ShieldCheck className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
+        <span>Permanent legal record. Entries cannot be edited or deleted by anyone, and each one is chained to the previous entry so tampering is detectable.
+          {data && !full && ' You are seeing general moderation actions only.'}</span>
       </div>
-      <IncomingRequests items={access.incoming} onDecide={decide} />
-      <div className="text-xs text-slate-500 flex items-center gap-1"><Clock className="h-3 w-3" />Showing the {LOG_LABEL[log]} log · last 100 entries</div>
-      {loading ? <Loader2 className="h-5 w-5 animate-spin text-slate-500" /> : rows.length === 0
-        ? <p className="text-sm text-slate-500" data-testid="audit-empty">No entries yet.</p>
-        : rows.map(r => (
-          <div key={r.id} className="bg-panel border border-edge rounded-2xl p-3 text-sm flex items-center gap-3" data-testid="audit-entry">
-            <ScrollText className="h-4 w-4 text-slate-500" />
-            <div className="flex-1"><span className="font-medium">#{r.admin_handle}</span> <span className="text-brand">{r.action}</span> <span className="text-slate-400">{r.target}</span>
-              {r.detail && <span className="text-slate-500"> — {r.detail}</span>}</div>
-            <span className="text-xs text-slate-600">{timeAgo(r.created_at)}</span>
-          </div>
+      <div className="flex gap-2">
+        <div className="flex-1 flex items-center gap-2 bg-ink border border-edge rounded-xl px-3 focus-within:border-brand">
+          <Search className="h-4 w-4 text-slate-500" />
+          <input value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => e.key === 'Enter' && load()} data-testid="audit-search-input"
+            placeholder="Search staff, @handle or detail…" className="flex-1 bg-transparent py-2.5 outline-none text-sm" />
+        </div>
+        <button onClick={() => load()} data-testid="audit-search-btn" className="px-4 rounded-xl bg-brand font-medium text-sm">Search</button>
+      </div>
+      <div className="flex gap-1.5 flex-wrap">
+        {FILTERS.filter(f => !f.full || full).map(f => (
+          <button key={f.key || 'all'} onClick={() => { setAction(f.key); load(f.key) }} data-testid={`audit-filter-${f.key || 'all'}`}
+            className={`px-3 py-1 rounded-full text-xs border ${action === f.key ? 'bg-brand/20 border-brand text-white' : 'border-edge text-slate-400 hover:text-white'}`}>{f.label}</button>
         ))}
+      </div>
+      {loading ? <Loader2 className="h-5 w-5 animate-spin text-slate-500" />
+        : !data?.entries?.length ? <p className="text-sm text-slate-500" data-testid="audit-empty">No entries.</p>
+        : data.entries.map((r: any) => <Entry key={r.id} r={r} />)}
     </div>
   )
 }

@@ -7,9 +7,10 @@ import RoleBadge from './RoleBadge'
 import AdultBadge from './AdultBadge'
 import AccountBadge from './AccountBadge'
 import MediaLightbox from './MediaLightbox'
+import { DownloadButton, SpoilerCover } from './MediaTools'
 import AvatarMenu from './AvatarMenu'
 
-const REPORT_CATS = ['harassment', 'hate', 'self_harm', 'inappropriate', 'unlabelled_ai', 'impersonation', 'underage', 'spam', 'csam', 'other']
+const REPORT_CATS = ['spam', 'harassment', 'hate', 'impersonation', 'nsfw', 'self_harm', 'unlabelled_ai', 'underage', 'csam', 'other']
 const RX: Record<string, string> = { like: '👍', love: '❤️', haha: '😂', wow: '😮', sad: '😢', angry: '😡' }
 
 export default function PostCard({ post, onDelete }: { post: any; onDelete?: (id: string) => void }) {
@@ -36,6 +37,9 @@ export default function PostCard({ post, onDelete }: { post: any; onDelete?: (id
   const [lightbox, setLightbox] = useState(false)
   const [lbIndex, setLbIndex] = useState(0)
   const [activeIdx, setActiveIdx] = useState(0)
+  const [revealed, setRevealed] = useState(!post.spoiler)
+  const canDl = !!post.can_download
+  const noSave = canDl ? undefined : (e: React.MouseEvent) => e.preventDefault()
   const [history, setHistory] = useState<any | null>(null)
   const openHistory = async () => {
     setShowHistory(true)
@@ -129,7 +133,8 @@ export default function PostCard({ post, onDelete }: { post: any; onDelete?: (id
             <div className="mt-1.5 text-xs text-amber-400">You're tagged here — approve or reject it from your Activity.</div>
           )}
           {visuals.length > 0 && (
-            <div className="relative mt-3">
+            <div className="relative mt-3" onContextMenu={noSave}>
+              {!revealed && <SpoilerCover onReveal={() => setRevealed(true)} testId={`post-spoiler-${post.id}`} />}
               <div
                 className="flex overflow-x-auto snap-x snap-mandatory rounded-xl"
                 onScroll={(e) => {
@@ -149,7 +154,7 @@ export default function PostCard({ post, onDelete }: { post: any; onDelete?: (id
                   >
                     {m.type === 'video' ? (
                       <>
-                        <video src={m.url} muted playsInline preload="metadata" className="max-h-96 w-full object-cover pointer-events-none" />
+                        <video src={m.url} muted playsInline preload="metadata" className={`max-h-96 w-full object-cover pointer-events-none ${revealed ? '' : 'blur-2xl'}`} />
                         <span className="absolute inset-0 grid place-items-center">
                           <span className="h-14 w-14 rounded-full bg-black/60 grid place-items-center">
                             <Play className="h-7 w-7 text-white ml-0.5" />
@@ -157,7 +162,7 @@ export default function PostCard({ post, onDelete }: { post: any; onDelete?: (id
                         </span>
                       </>
                     ) : (
-                      <img src={m.url} className="max-h-96 w-full object-cover" />
+                      <img src={m.url} draggable={canDl} className={`max-h-96 w-full object-cover ${revealed ? '' : 'blur-2xl'}`} />
                     )}
                   </button>
                 ))}
@@ -168,6 +173,13 @@ export default function PostCard({ post, onDelete }: { post: any; onDelete?: (id
                   <Sparkles className="h-3 w-3 text-brand" />
                   {post.ai_label === 'generated' ? 'AI Generated' : post.ai_label === 'assisted' ? 'AI Assisted' : 'AI Altered'}
                 </span>
+              )}
+
+              {revealed && (canDl || post.spoiler) && (
+                <div className="absolute bottom-2 right-2 flex gap-1.5">
+                  {post.spoiler && <button type="button" onClick={() => setRevealed(false)} data-testid={`post-spoiler-hide-${post.id}`} className="h-9 px-3 rounded-full bg-black/60 text-white text-xs font-medium hover:bg-black/80">Hide</button>}
+                  {canDl && <DownloadButton url={visuals[Math.min(activeIdx, visuals.length - 1)].url} type={visuals[Math.min(activeIdx, visuals.length - 1)].type} testId={`post-download-${post.id}`} />}
+                </div>
               )}
 
               {visuals.length > 1 && (
@@ -184,11 +196,14 @@ export default function PostCard({ post, onDelete }: { post: any; onDelete?: (id
           )}
 
           {audios.map((m, i) => (
-            <audio key={i} src={m.url} controls className="w-full mt-2" />
+            <div key={i} className="flex items-center gap-2 mt-2">
+              <audio src={m.url} controls controlsList={canDl ? undefined : 'nodownload'} className="w-full" />
+              {canDl && <DownloadButton url={m.url} type="audio" testId={`post-audio-download-${post.id}-${i}`} className="shrink-0" />}
+            </div>
           ))}
 
           {lightbox && visuals.length > 0 && (
-            <MediaLightbox items={visuals} index={lbIndex} onClose={() => setLightbox(false)} />
+            <MediaLightbox items={visuals} index={lbIndex} canDownload={canDl} onClose={() => setLightbox(false)} />
           )}
           {post.tags?.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">

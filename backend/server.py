@@ -1,3 +1,4 @@
+import io
 import os
 import re
 import uuid
@@ -676,6 +677,7 @@ async def post_out(p: dict, viewer_id: str) -> dict:
         'tags': p.get('tags', []), 'nsfw': bool(p.get('nsfw')), 'nsfw_tags': p.get('nsfw_tags', []), 'ai_label': p.get('ai_label', 'none'), 'edited': bool(p.get('edited')), 'edited_count': len(p.get('edit_history', [])), 'pinned': bool(p.get('pinned')), 'can_edit': p['author_id'] == viewer_id, 'created_at': p['created_at'],
         'people_tags': people_tags, 'my_tag_status': my_tag_status,
         'allow_download': p.get('allow_download', True) is not False, 'spoiler': bool(p.get('spoiler')),
+        'watermark': bool(p.get('watermark')),
         'can_download': p['tier'] == 'public' and p.get('allow_download', True) is not False,
         'like_count': len(p.get('likes', [])), 'liked': liked,
         'likeable': p['tier'] == 'public',
@@ -738,6 +740,7 @@ class PostCreate(BaseModel):
     ai_label: Optional[str] = 'none'  # none | generated | assisted | altered
     allow_download: Optional[bool] = True  # poster can block downloads (only public posts are ever downloadable)
     spoiler: Optional[bool] = False        # media blurred until the viewer taps to reveal
+    watermark: Optional[bool] = False      # creators only: downloads of the photos carry '@handle on Skali'
 
 class ReactBody(BaseModel):
     emoji: str  # like | love | haha | wow | sad | angry
@@ -1997,6 +2000,7 @@ async def create_post(body: PostCreate, u: dict = Depends(get_current_user)):
            'nsfw_tags': nsfw_tags, 'nsfw': is_nsfw,
            'people_tags': people, 'ai_label': ai_label,
            'allow_download': body.allow_download is not False, 'spoiler': bool(body.spoiler) and bool(media_items),
+           'watermark': bool(body.watermark) and _is_creator_account(u) and any(m['type'] == 'image' for m in media_items),
            'likes': [], 'created_at': datetime.now(timezone.utc).isoformat()}
     await db.posts.insert_one(dict(doc))
     # Block 5: register tags in the registry (dedupe + counts + nsfw flag).
@@ -2055,6 +2059,115 @@ async def edit_post(post_id: str, body: EditText, u: dict = Depends(get_current_
     await db.posts.update_one({'id': post_id}, {
         '$set': {'text': text, 'edited': True, 'edited_at': datetime.now(timezone.utc).isoformat()},
         '$push': {'edit_history': prev}})
+    return await post_out(await db.posts.find_one({'id': post_id}), u['id'])
+
+
+def _is_creator_account(prof: dict) -> bool:
+    """Same test the profile uses for `creator_account`: creator account switched on."""
+    return bool(prof.get('is_creator')) or bool(prof.get('creator_override')) or monetisation_ok(prof)
+
+
+def _stamp_watermark(data: bytes, text: str) -> tuple:
+    """Stamp `text` in the bottom-right corner. Returns (bytes, content_type).
+    Photos only: animated images are returned untouched. Output carries no EXIF/GPS data."""
+    from PIL import Image, ImageDraw, ImageFont, ImageOps
+    im = Image.open(io.BytesIO(data))
+    if getattr(im, 'is_animated', False):
+        return data, Image.MIME.get(im.format or '', 'application/octet-stream')
+    keep_png = (im.format == 'PNG')
+    im = ImageOps.exif_transpose(im).convert('RGBA')
+    w, h = im.size
+    size = max(12, int(min(w, h) * 0.04))
+    layer = Image.new('RGBA', im.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    for _ in range(12):  # shrink until the mark fits inside narrow images
+        font = ImageFont.load_default(size=size)
+        l, t, r, b = d.textbbox((0, 0), text, font=font)
+        if (r - l) + 2 * max(6, size // 2) + 8 <= w * 0.95 or size <= 8:
+            break
+        size = max(8, int(size * 0.85))
+    pad = max(4, size // 2)
+    box_w, box_h = (r - l) + 2 * pad, (b - t) + 2 * pad
+    x0, y0 = max(0, w - box_w - pad), max(0, h - box_h - pad)
+    d.rounded_rectangle([x0, y0, x0 + box_w, y0 + box_h], radius=pad, fill=(0, 0, 0, 120))
+    d.text((x0 + pad - l, y0 + pad - t), text, font=font, fill=(255, 255, 255, 235))
+    out = Image.alpha_composite(im, layer)
+    buf = io.BytesIO()
+    if keep_png:
+        out.save(buf, 'PNG')
+        return buf.getvalue(), 'image/png'
+    out.convert('RGB').save(buf, 'JPEG', quality=92)
+    return buf.getvalue(), 'image/jpeg'
+
+
+async def _read_media_bytes(url: str) -> tuple:
+    """Read a stored media file. Only our own storage is ever fetched (never an arbitrary URL)."""
+    if url.startswith('/api/media/'):
+        path = url[len('/api/media/'):].split('?')[0]
+        if '..' in path:
+            raise HTTPException(400, 'This media cannot be downloaded here')
+        return await _emergent_get(path)
+    if _supabase_configured() and url.startswith(f'{SUPABASE_URL}/storage/v1/'):
+        async with httpx.AsyncClient(timeout=60) as c:
+            r = await c.get(url)
+            r.raise_for_status()
+            return r.content, r.headers.get('Content-Type', 'application/octet-stream')
+    raise HTTPException(400, 'This media cannot be downloaded here')
+
+
+@app.get('/api/posts/{post_id}/download/{index}')
+async def download_post_media(post_id: str, index: int, u: dict = Depends(get_current_user)):
+    """Download one media item of a public post. If the creator turned on watermarking, other
+    people get a copy stamped '@handle on Skali'; the creator always gets their clean original."""
+    p = await db.posts.find_one({'id': post_id})
+    if not p:
+        raise HTTPException(404, 'Post not found')
+    out = await post_out(p, u['id'])
+    if not out.get('can_download'):
+        raise HTTPException(403, 'Downloads are not allowed for this post')
+    media = out.get('media') or []
+    if index < 0 or index >= len(media):
+        raise HTTPException(404, 'Media not found')
+    item = media[index]
+    try:
+        data, ct = await _read_media_bytes(item['url'])
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(404, 'Media not found')
+    if p.get('watermark') and p['author_id'] != u['id'] and item.get('type') == 'image':
+        author = await db.profiles.find_one({'id': p['author_id']})
+        handle = (author or {}).get('handle') or 'skali'
+        try:
+            data, ct = await asyncio.to_thread(_stamp_watermark, data, f'@{handle} on Skali')
+        except Exception as e:
+            log.info(f'watermark failed for post {post_id}: {e}')
+            raise HTTPException(422, 'Could not prepare this image for download')
+    ext = {'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
+           'video/mp4': 'mp4', 'audio/webm': 'webm'}.get((ct or '').split(';')[0].strip(), 'bin')
+    return Response(content=data, media_type=ct, headers={
+        'Content-Disposition': f'attachment; filename="skali-{post_id[:8]}-{index + 1}.{ext}"',
+        'Cache-Control': 'private, no-store'})
+
+
+class WatermarkBody(BaseModel):
+    enabled: bool
+
+
+@app.put('/api/posts/{post_id}/watermark')
+async def set_post_watermark(post_id: str, body: WatermarkBody, u: dict = Depends(get_current_user)):
+    """Creators only: switch watermarking on or off for one of their own posts."""
+    if not _is_creator_account(u):
+        raise HTTPException(403, 'Turn on your creator account to add watermarks.')
+    p = await db.posts.find_one({'id': post_id})
+    if not p:
+        raise HTTPException(404, 'Post not found')
+    if p['author_id'] != u['id']:
+        raise HTTPException(403, 'Not your post')
+    out = await post_out(p, u['id'])
+    if body.enabled and not any(m.get('type') == 'image' for m in (out.get('media') or [])):
+        raise HTTPException(400, 'Watermarks only apply to photos')
+    await db.posts.update_one({'id': post_id}, {'$set': {'watermark': bool(body.enabled)}})
     return await post_out(await db.posts.find_one({'id': post_id}), u['id'])
 
 
@@ -3267,6 +3380,23 @@ async def sensitive_access_guard(u: dict = Depends(require_full_admin),
 
 AUDIT_LOGS = ('super_admin', 'co_admin', 'moderator')
 RESTRICTED_AUDIT_PREFIXES = ('inv_', 'csam', 'nsfw_', 'view_dms', 'silent_', 'dm_access')
+# Entries only their own author can see: investigation activity and a reviewer's own CSAM
+# checks. Report outcomes and every other restricted entry stay visible to full admins.
+PRIVATE_AUDIT_PREFIXES = ('inv_', 'csam_list_view', 'csam_vote')
+CSAM_REVIEW_CATS = ('csam', 'underage')
+CSAM_REVIEW_TAGS = {'flag_police': 'Flag to police', 'joint_review': 'Joint review', 'closed': 'Case closed'}
+SYSTEM_ACTOR = {'id': 'system', 'handle': 'system'}
+CSAM_DEADLINE_HOURS = 72          # a report not closed by two 'no' reviews is passed on at this mark
+CSAM_WARN_HOURS = (24, 6)         # 'due soon' pushes to full admins
+
+
+def csam_review_outcome(verdicts: list) -> Optional[str]:
+    """Blind two-person review. Nothing is decided until two reviewers have voted:
+    yes+yes -> flag to police, no+no -> case closed, one of each -> joint review."""
+    if len(verdicts) < 2:
+        return None
+    yes = sum(1 for v in verdicts[:2] if v == 'yes')
+    return 'flag_police' if yes == 2 else ('closed' if yes == 0 else 'joint_review')
 
 
 def audit_log_of(prof: dict) -> str:
@@ -3622,6 +3752,10 @@ async def admin_reports(status: str = 'open', a: dict = Depends(require_mod)):
         q = {'assigned.id': a['id'], 'status': {'$in': ['open', 'assigned']}}
     if not is_full_admin(a):
         q['category'] = {'$nin': list(SENSITIVE_REPORT_CATS)}
+    mine: dict = {}
+    if is_full_admin(a):
+        async for v in db.csam_votes.find({'reviewer_id': a['id']}, {'_id': 0}):
+            mine[v['report_id']] = v['verdict']
     out = []
     async for r in db.reports.find(q, {'_id': 0}).sort('created_at', -1).limit(100):
         target_user = await _resolve_target_user(r['target_type'], r['target_id'])
@@ -3635,7 +3769,7 @@ async def admin_reports(status: str = 'open', a: dict = Depends(require_mod)):
             preview = {'text': (dec(m['content_enc']) if m and m.get('content_enc') else '(no text)') if m else '(deleted)',
                        'media_url': m.get('media_url') if m else None}
         out.append({**r, 'target_user': {'handle': target_user['handle'], 'display_name': target_user['display_name']} if target_user else None,
-                    'preview': preview})
+                    'preview': preview, 'my_review': mine.get(r['id'])})
     return out
 
 async def _report_for(report_id: str, a: dict) -> dict:
@@ -3671,6 +3805,8 @@ async def admin_report_assign(report_id: str, body: AssignIn, a: dict = Depends(
 @app.post('/api/admin/reports/{report_id}/action')
 async def admin_action(report_id: str, body: ActionIn, a: dict = Depends(require_mod)):
     r = await _report_for(report_id, a)
+    if r.get('category') in CSAM_REVIEW_CATS and not r.get('review_outcome'):
+        raise HTTPException(409, 'This report needs two independent reviews (CSAM tab) before any action.')
     if body.severe and not is_full_admin(a):
         raise HTTPException(403, 'Only a Co-admin or Super admin can terminate an account')
     sens = r.get('category') in SENSITIVE_REPORT_CATS
@@ -3707,9 +3843,27 @@ async def admin_action(report_id: str, body: ActionIn, a: dict = Depends(require
 
 @app.get('/api/admin/csam')
 async def admin_csam(a: dict = Depends(sensitive_access_guard)):
-    out = []
-    async for r in db.csam_reports.find({}, {'_id': 0}).sort('created_at', -1).limit(100):
-        out.append(r)
+    try:
+        await csam_deadline_sweep()
+    except Exception as e:
+        log.info(f'csam deadline sweep (list) failed: {e}')
+    mine: dict = {}
+    async for v in db.csam_votes.find({'reviewer_id': a['id']}, {'_id': 0}):
+        mine[v['report_id']] = v['verdict']
+    items = []
+    async for r in db.csam_reports.find({}, {'_id': 0}).sort('created_at', -1).limit(500):
+        oc = r.get('review_outcome')
+        # Never include anyone else's vote, or whether a second reviewer has looked yet.
+        r['review'] = {'status': oc or 'pending', 'tag': CSAM_REVIEW_TAGS.get(oc), 'my_vote': mine.get(r['id'])}
+        r['deadline_at'] = _csam_deadline(r).isoformat()
+        for k in ('warned_24h', 'warned_6h'):
+            r.pop(k, None)
+        items.append(r)
+    # Most urgent first: open cases by soonest deadline, then everything else newest first.
+    live = sorted([r for r in items if not r.get('escalated') and r['review']['status'] != 'closed'],
+                  key=lambda r: r['deadline_at'])
+    live_ids = {r['id'] for r in live}
+    out = (live + [r for r in items if r['id'] not in live_ids])[:200]
     await audit(a, 'csam_list_view', 'csam_queue', f'viewed {len(out)} report(s)')
     return out
 
@@ -3769,18 +3923,26 @@ async def admin_clear_strikes(handle: str, a: dict = Depends(require_full_admin)
     return {'ok': True}
 
 # ----------------------------- Audit log (immutable, role-filtered) -----------------------------
-# Full admins (super_admin / co_admin) see every entry. Moderators see general actions
-# only — never investigation, DM, CSAM or NSFW entries. There is no edit/delete endpoint.
+# Full admins (super_admin / co_admin) see every entry EXCEPT other admins' private ones
+# (investigations and individual CSAM checks, which only their author sees). Moderators see
+# general actions only — never investigation, DM, CSAM or NSFW entries. No edit/delete endpoint.
 
 def _moderator_audit_filter() -> dict:
     return {'restricted': {'$ne': True},
             'action': {'$not': re.compile('^(' + '|'.join(re.escape(x) for x in RESTRICTED_AUDIT_PREFIXES) + ')')}}
 
 
+def _private_audit_filter(me_id: str) -> dict:
+    return {'$or': [
+        {'action': {'$not': re.compile('^(' + '|'.join(re.escape(x) for x in PRIVATE_AUDIT_PREFIXES) + ')')}},
+        {'admin_id': me_id},
+    ]}
+
+
 @app.get('/api/admin/audit')
 async def admin_audit(q: str = '', action: str = '', limit: int = 200, a: dict = Depends(require_mod)):
     full = is_full_admin(a)
-    query: dict = {} if full else _moderator_audit_filter()
+    query: dict = _private_audit_filter(a['id']) if full else _moderator_audit_filter()
     conds = []
     if q.strip():
         rx = {'$regex': re.escape(q.strip().lstrip('#@')), '$options': 'i'}
@@ -4217,6 +4379,8 @@ async def admin_csam_escalate(report_id: str, a: dict = Depends(sensitive_access
     r = await db.csam_reports.find_one({'id': report_id})
     if not r:
         raise HTTPException(404, 'Report not found')
+    if r.get('review_outcome') != 'flag_police':
+        raise HTTPException(409, 'Escalation needs two matching "yes" reviews first.')
     await db.csam_reports.update_one({'id': report_id}, {'$set': {
         'escalated': True, 'ceop_ref': f"CEOP-{report_id[:8].upper()}",
         'escalated_by': a['handle'], 'escalated_at': datetime.now(timezone.utc).isoformat()}})
@@ -4229,11 +4393,131 @@ async def admin_csam_resolve(report_id: str, a: dict = Depends(sensitive_access_
     r = await db.csam_reports.find_one({'id': report_id})
     if not r:
         raise HTTPException(404, 'Report not found')
+    if not r.get('review_outcome'):
+        raise HTTPException(409, 'This report needs two independent reviews first.')
     await db.csam_reports.update_one({'id': report_id}, {'$set': {
         'status': 'resolved', 'resolved_by': a['handle'],
         'resolved_at': datetime.now(timezone.utc).isoformat()}})
     await audit(a, 'csam_resolve', r.get('target_id', ''), report_id)
     return {'ok': True, 'status': 'resolved'}
+
+
+class CsamVoteIn(BaseModel):
+    verdict: str  # 'yes' = this is CSAM, 'no' = it is not
+
+
+@app.post('/api/admin/csam/{report_id}/vote')
+async def admin_csam_vote(report_id: str, body: CsamVoteIn, a: dict = Depends(sensitive_access_guard)):
+    """Blind two-person verification of a CSAM / underage report.
+    Each reviewer votes once and cannot see the other's vote (or whether it exists). The outcome is
+    only set when the second vote lands: yes+yes -> flag to police, one each -> joint review,
+    no+no -> case closed. Each vote is written to the voter's own private audit log."""
+    verdict = (body.verdict or '').strip().lower()
+    if verdict not in ('yes', 'no'):
+        raise HTTPException(400, "Verdict must be 'yes' or 'no'")
+    await csam_deadline_sweep()  # a report already past 72h is passed on, not voted on
+    r = await db.csam_reports.find_one({'id': report_id})
+    if not r:
+        raise HTTPException(404, 'Report not found')
+    if r.get('review_outcome'):
+        raise HTTPException(409, 'This report has already been reviewed')
+    if await db.csam_votes.find_one({'report_id': report_id, 'reviewer_id': a['id']}):
+        raise HTTPException(409, 'You have already reviewed this report')
+    now = datetime.now(timezone.utc).isoformat()
+    await db.csam_votes.insert_one({
+        'id': str(uuid.uuid4()), 'report_id': report_id, 'reviewer_id': a['id'],
+        'reviewer_handle': a['handle'], 'verdict': verdict, 'created_at': now})
+    await audit(a, 'csam_vote', r.get('target_id', ''), f'report {report_id[:8]} · verdict {verdict}', restricted=True)
+
+    verdicts = []
+    async for v in db.csam_votes.find({'report_id': report_id}, {'_id': 0}).sort('created_at', 1).limit(2):
+        verdicts.append(v['verdict'])
+    outcome = csam_review_outcome(verdicts)
+    if not outcome:
+        return {'ok': True, 'my_vote': verdict, 'status': 'pending'}
+
+    tag = CSAM_REVIEW_TAGS[outcome]
+    patch = {'review_outcome': outcome, 'review_tag': tag, 'review_at': now, 'status': outcome}
+    res = await db.csam_reports.update_one({'id': report_id, 'review_outcome': {'$exists': False}}, {'$set': patch})
+    if res.modified_count:
+        await db.reports.update_one({'id': report_id}, {'$set': patch})
+        await audit(SYSTEM_ACTOR, 'csam_review_outcome', r.get('target_id', ''),
+                    f'report {report_id[:8]} · {tag}', restricted=True)
+    return {'ok': True, 'my_vote': verdict, 'status': outcome, 'tag': tag}
+
+
+# ---- 72-hour legal deadline -------------------------------------------------------------
+def _csam_deadline(r: dict) -> datetime:
+    try:
+        created = datetime.fromisoformat(r['created_at'])
+    except Exception:
+        created = datetime.now(timezone.utc)
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    return created + timedelta(hours=CSAM_DEADLINE_HOURS)
+
+
+async def _full_admin_ids() -> list:
+    q = {'$or': [{'role': {'$in': list(FULL_ADMIN_ROLES)}}, {'is_admin': True},
+                 {'email': {'$in': list(ADMIN_EMAILS)}}]}
+    return [p['id'] async for p in db.profiles.find(q, {'_id': 0}) if is_full_admin(p)]
+
+
+async def _push_full_admins(title: str, body: str):
+    # Deliberately generic: no names, handles or content on a lock screen.
+    for uid in await _full_admin_ids():
+        await push_to_user(uid, title, body, {'type': 'csam_deadline'})
+
+
+async def csam_deadline_sweep() -> int:
+    """Anything not closed by two 'no' reviews and not yet passed on, once 72 hours old, is
+    passed on regardless of review state (none / one vote / joint review / flagged-but-unsent).
+    Also sends 'due soon' pushes at 24h and 6h. Safe to call often and from several places."""
+    now = datetime.now(timezone.utc)
+    passed = 0
+    async for r in db.csam_reports.find({'escalated': {'$ne': True}, 'review_outcome': {'$ne': 'closed'}}, {'_id': 0}):
+        left = _csam_deadline(r) - now
+        rid = r['id']
+        if left > timedelta(0):
+            due = [h for h in sorted(CSAM_WARN_HOURS) if left <= timedelta(hours=h)]
+            if due and not r.get(f'warned_{due[0]}h'):
+                claim = await db.csam_reports.update_one(
+                    {'id': rid, f'warned_{due[0]}h': {'$ne': True}},
+                    {'$set': {f'warned_{h}h': True for h in CSAM_WARN_HOURS if h >= due[0]}})
+                if claim.modified_count:
+                    await _push_full_admins('Review deadline', f'A report is due in under {due[0]} hours.')
+            continue
+        now_iso = now.isoformat()
+        patch = {'review_outcome': 'flag_police', 'review_tag': CSAM_REVIEW_TAGS['flag_police'],
+                 'status': 'flag_police', 'review_at': r.get('review_at') or now_iso,
+                 'escalated': True, 'ceop_ref': f'CEOP-{rid[:8].upper()}',
+                 'escalated_by': 'system (72-hour deadline)', 'escalated_at': now_iso,
+                 'auto_escalated': True, 'outcome_before_deadline': r.get('review_outcome') or 'pending'}
+        res = await db.csam_reports.update_one(
+            {'id': rid, 'escalated': {'$ne': True}, 'review_outcome': {'$ne': 'closed'}}, {'$set': patch})
+        if res.modified_count:
+            await db.reports.update_one({'id': rid}, {'$set': {
+                k: patch[k] for k in ('review_outcome', 'review_tag', 'status', 'review_at', 'auto_escalated')}})
+            await audit(SYSTEM_ACTOR, 'csam_deadline_escalation', r.get('target_id', ''),
+                        f'report {rid[:8]} · passed on at the {CSAM_DEADLINE_HOURS}-hour deadline (review not complete)',
+                        restricted=True)
+            await _push_full_admins('Report passed on', 'A report was passed on automatically at the 72-hour deadline.')
+            passed += 1
+    return passed
+
+
+@app.on_event('startup')
+async def _start_csam_deadline_worker():
+    asyncio.create_task(_csam_deadline_worker())
+
+
+async def _csam_deadline_worker():
+    while True:
+        try:
+            await csam_deadline_sweep()
+        except Exception as e:
+            log.info(f'csam deadline worker error: {e}')
+        await asyncio.sleep(60)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

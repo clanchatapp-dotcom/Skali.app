@@ -2,14 +2,14 @@ import { useState } from 'react'
 import { Download, Loader2, Check, EyeOff } from 'lucide-react'
 import { downloadMedia } from '../lib/download'
 
-export function DownloadButton({ url, type, testId, className = '', label }: { url: string; type: string; testId: string; className?: string; label?: boolean }) {
+export function DownloadButton({ url, type, testId, className = '', label, getBlob }: { url: string; type: string; testId: string; className?: string; label?: boolean; getBlob?: () => Promise<Blob> }) {
   const [state, setState] = useState<'idle' | 'busy' | 'done'>('idle')
   const [msg, setMsg] = useState('')
   const go = async (e: React.MouseEvent) => {
     e.stopPropagation(); e.preventDefault()
     if (state === 'busy') return
     setState('busy')
-    try { setMsg(await downloadMedia(url, type)); setState('done') } catch { setMsg('Download failed'); setState('idle') }
+    try { setMsg(await downloadMedia(url, type, getBlob)); setState('done') } catch (err: any) { setMsg(err?.message || 'Download failed'); setState('idle') }
     setTimeout(() => { setState('idle'); setMsg('') }, 2500)
   }
   const Icon = state === 'busy' ? Loader2 : state === 'done' ? Check : Download

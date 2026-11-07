@@ -39,6 +39,11 @@ export default function PostCard({ post, onDelete }: { post: any; onDelete?: (id
   const [activeIdx, setActiveIdx] = useState(0)
   const [revealed, setRevealed] = useState(!post.spoiler)
   const canDl = !!post.can_download
+  const [watermark, setWatermark] = useState(!!post.watermark)
+  const toggleWatermark = async () => {
+    try { const r = await api.setPostWatermark(post.id, !watermark); setWatermark(!!r.watermark) } catch (e: any) { alert(e.message) }
+  }
+  const hasImage = (post.media || []).some((m: any) => m.type === 'image')
   const noSave = canDl ? undefined : (e: React.MouseEvent) => e.preventDefault()
   const [history, setHistory] = useState<any | null>(null)
   const openHistory = async () => {
@@ -120,6 +125,7 @@ export default function PostCard({ post, onDelete }: { post: any; onDelete?: (id
             <div className="mt-1 flex items-center gap-3">
               <button onClick={() => { setEditText(text || ''); setEditing(true) }} className="text-xs text-slate-500 hover:text-brand">Edit</button>
               <button onClick={togglePin} className="text-xs text-slate-500 hover:text-brand inline-flex items-center gap-1"><Pin className="h-3 w-3" />{pinned ? 'Unpin' : 'Pin to profile'}</button>
+              {hasImage && post.tier === 'public' && <button onClick={toggleWatermark} data-testid={`post-watermark-${post.id}`} className="text-xs text-slate-500 hover:text-brand">{watermark ? 'Watermark: on' : 'Add watermark'}</button>}
             </div>
           )}
           {post.people_tags?.filter((pt: any) => pt.status === 'approved').length > 0 && (
@@ -178,7 +184,12 @@ export default function PostCard({ post, onDelete }: { post: any; onDelete?: (id
               {revealed && (canDl || post.spoiler) && (
                 <div className="absolute bottom-2 right-2 flex gap-1.5">
                   {post.spoiler && <button type="button" onClick={() => setRevealed(false)} data-testid={`post-spoiler-hide-${post.id}`} className="h-9 px-3 rounded-full bg-black/60 text-white text-xs font-medium hover:bg-black/80">Hide</button>}
-                  {canDl && <DownloadButton url={visuals[Math.min(activeIdx, visuals.length - 1)].url} type={visuals[Math.min(activeIdx, visuals.length - 1)].type} testId={`post-download-${post.id}`} />}
+                  {canDl && (() => {
+                    const cur = visuals[Math.min(activeIdx, visuals.length - 1)]
+                    const stamped = watermark && !post.can_edit && cur.type === 'image'
+                    const idx = (post.media || []).findIndex((x: any) => x.url === cur.url)
+                    return <DownloadButton url={cur.url} type={cur.type} testId={`post-download-${post.id}`} getBlob={stamped && idx >= 0 ? () => api.downloadPostMedia(post.id, idx) : undefined} />
+                  })()}
                 </div>
               )}
 

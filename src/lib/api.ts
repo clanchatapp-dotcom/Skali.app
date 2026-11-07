@@ -22,6 +22,14 @@ export const hasStepUp = () => !!stepUpSecret
 const stepUpHeaders = (): Record<string, string> =>
   stepUpSecret ? { 'X-Step-Up': stepUpSecret } : {}
 
+// Investigations session (issued after a correct personal PIN). Memory-only.
+let invSession = ''
+export const setInvSession = (t: string) => { invSession = t || '' }
+export const hasInvSession = () => !!invSession
+const invHeaders = (): Record<string, string> => (invSession ? { 'X-Inv-Session': invSession } : {})
+const invReq = (path: string, opts: RequestInit = {}) =>
+  req(`/admin/investigations${path}`, { ...opts, headers: { ...(opts.headers as any), ...invHeaders() } })
+
 // Render backend fallback for the native app.
 const NATIVE_API_FALLBACK =
   'https://clanchatapp-backend.onrender.com'
@@ -662,7 +670,8 @@ export const api = {
     duration?: number,
     text?: string,
     view_once?: boolean,
-    allow_save?: boolean
+    allow_save?: boolean,
+    spoiler?: boolean
   ) =>
     req(`/dms/${handle}`, {
       method: 'POST',
@@ -673,6 +682,7 @@ export const api = {
         text,
         view_once,
         allow_save,
+        spoiler,
       }),
     }),
 
@@ -901,29 +911,25 @@ export const api = {
       method: 'POST',
     }),
 
-  adminUserDms: (
-    handle: string,
-    legal_basis: string
-  ) =>
-    req(
-      `/admin/dms/${handle}?legal_basis=${encodeURIComponent(legal_basis)}`,
-      { headers: stepUpHeaders() }
-    ),
+  adminAudit: (q = '', action = '') =>
+    req(`/admin/audit?q=${encodeURIComponent(q)}&action=${encodeURIComponent(action)}`),
+  adminReportAssign: (id: string, assign: boolean) =>
+    req(`/admin/reports/${id}/assign`, { method: 'POST', body: j({ assign }) }),
 
-  adminInvestigate: (
-    handle: string,
-    legal_basis: string
-  ) =>
-    req(
-      `/admin/investigate/${handle}?legal_basis=${encodeURIComponent(legal_basis)}`,
-      { headers: stepUpHeaders() }
-    ),
-
-  adminAudit: (log?: string) => req(`/admin/audit${log ? `?log=${encodeURIComponent(log)}` : ''}`),
-  adminAuditAccess: () => req('/admin/audit/access'),
-  adminAuditRequest: (log: string) => req('/admin/audit/access/request', { method: 'POST', body: JSON.stringify({ log }) }),
-  adminAuditDecide: (id: string, decision: 'approve' | 'deny') => req(`/admin/audit/access/${id}/${decision}`, { method: 'POST' }),
-
+  // Investigations (PIN-protected; Co-admin / Super admin only)
+  invStatus: () => req('/admin/investigations/status'),
+  invSetPin: (pin: string) => req('/admin/investigations/pin', { method: 'POST', body: j({ pin }) }),
+  invUnlock: (pin: string) => req('/admin/investigations/unlock', { method: 'POST', body: j({ pin }) }),
+  invLock: () => invReq('/lock', { method: 'POST' }),
+  invResetPin: (handle: string) => req('/admin/investigations/pin/reset', { method: 'POST', body: j({ handle }) }),
+  invSearch: (handle: string) => invReq(`/search?handle=${encodeURIComponent(handle)}`),
+  invFeed: (handle: string, reason = '') => invReq(`/${encodeURIComponent(handle)}/feed?reason=${encodeURIComponent(reason)}`),
+  invDms: (handle: string, reason = '') => invReq(`/${encodeURIComponent(handle)}/dms?reason=${encodeURIComponent(reason)}`),
+  invCases: () => invReq('/cases'),
+  invRequest: (caseId: string) => invReq(`/cases/${caseId}/request`, { method: 'POST' }),
+  invDecide: (reqId: string, decision: 'approve' | 'decline') => invReq(`/requests/${reqId}/${decision}`, { method: 'POST' }),
+  invRevoke: (caseId: string, admin_id: string) => invReq(`/cases/${caseId}/revoke`, { method: 'POST', body: j({ admin_id }) }),
+  invClose: (caseId: string) => invReq(`/cases/${caseId}/close`, { method: 'POST' }),
   adminPromote: (email: string) =>
     req('/admin/promote', {
       method: 'POST',
@@ -959,28 +965,6 @@ export const api = {
     req(`/admin/users/${handle}/account-type`, {
       method: 'POST',
       body: j({ account_type }),
-    }),
-
-  setCoadminDms: (enabled: boolean) =>
-    req('/admin/settings/coadmin-dms', {
-      method: 'POST',
-      body: j({ enabled }),
-    }),
-
-  dmAccessRequest: (handle: string) =>
-    req('/admin/dm-access/request', {
-      method: 'POST',
-      body: j({ handle }),
-    }),
-
-  dmAccessList: () => req('/admin/dm-access'),
-
-  dmAccessDecide: (
-    id: string,
-    decision: 'approve' | 'deny'
-  ) =>
-    req(`/admin/dm-access/${id}/${decision}`, {
-      method: 'POST',
     }),
 
   adminAddAdmin: (email: string) =>

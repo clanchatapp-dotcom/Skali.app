@@ -26,6 +26,8 @@ function Composer({ onPosted }: { onPosted: () => void }) {
   const [busy, setBusy] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [aiLabel, setAiLabel] = useState('none')
+  const [spoiler, setSpoiler] = useState(false)
+  const [allowDownload, setAllowDownload] = useState(true)
   const [expanded, setExpanded] = useState(false)
   const [nsfwTags, setNsfwTags] = useState<string[]>([])
   const [nsfwVocab, setNsfwVocab] = useState<string[]>([])
@@ -123,7 +125,9 @@ function Composer({ onPosted }: { onPosted: () => void }) {
         tags,
         nsfw_tags: nsfwTags,
         people_tags: people,
-        ai_label: hasVisual ? aiLabel : 'none'
+        ai_label: hasVisual ? aiLabel : 'none',
+        spoiler: hasVisual && spoiler,
+        allow_download: allowDownload
       })
 
       setText('')
@@ -132,6 +136,8 @@ function Composer({ onPosted }: { onPosted: () => void }) {
       setPeople([])
       setMediaList([])
       setAiLabel('none')
+      setSpoiler(false)
+      setAllowDownload(true)
       setTagInput('')
       setPeopleInput('')
       setExpanded(false)
@@ -268,6 +274,26 @@ function Composer({ onPosted }: { onPosted: () => void }) {
                   </button>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Media options: spoiler + downloads */}
+          {mediaList.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5 items-center" data-testid="post-media-options">
+              {mediaList.some(m => m.type !== 'audio') && (
+                <button type="button" onClick={() => setSpoiler(v => !v)} data-testid="post-spoiler-toggle"
+                  className={`text-xs px-2.5 py-1 rounded-full border transition ${spoiler ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' : 'border-edge text-slate-400 hover:text-white'}`}>
+                  {spoiler ? 'Spoiler: on' : 'Mark as spoiler'}
+                </button>
+              )}
+              {tier === 'public' ? (
+                <button type="button" onClick={() => setAllowDownload(v => !v)} data-testid="post-download-toggle"
+                  className={`text-xs px-2.5 py-1 rounded-full border transition ${allowDownload ? 'bg-brand/20 text-brand border-brand/40' : 'bg-rose-500/15 text-rose-300 border-rose-500/40'}`}>
+                  {allowDownload ? 'Downloads allowed' : 'Downloads blocked'}
+                </button>
+              ) : (
+                <span className="text-[11px] text-slate-500" data-testid="post-download-note">Only public posts can be downloaded</span>
+              )}
             </div>
           )}
 

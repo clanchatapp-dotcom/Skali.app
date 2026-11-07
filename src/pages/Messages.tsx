@@ -9,6 +9,8 @@ import AdultBadge from '../components/AdultBadge'
 import AccountBadge from '../components/AccountBadge'
 import AvatarMenu from '../components/AvatarMenu'
 import ActivityPill from '../components/ActivityPill'
+import ReportDialog from '../components/ReportDialog'
+import { DownloadButton, SpoilerCover } from '../components/MediaTools'
 import {
   secureOn,
   secureOff
@@ -36,7 +38,9 @@ import {
   Plus,
   Camera,
   Clock,
-  BellOff
+  BellOff,
+  Flag,
+  EyeOff
 } from 'lucide-react'
 
 export default function Messages() {
@@ -443,6 +447,12 @@ export default function Messages() {
 
   const [messageActions, setMessageActions] =
     useState<string | null>(null)
+  const [reportMsgId, setReportMsgId] = useState<string | null>(null)
+  const [spoiler, setSpoiler] = useState(false)
+  // Spoiler media the viewer has revealed in this thread; re-blurs when the chat is re-opened.
+  const [revealedIds, setRevealedIds] = useState<Set<string>>(new Set())
+  useEffect(() => { setRevealedIds(new Set()) }, [handle])
+  const toggleReveal = (id: string) => setRevealedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
 
   const longPressTimer =
     useRef<ReturnType<typeof setTimeout> | null>(
@@ -1086,7 +1096,7 @@ export default function Messages() {
 
     setGifOpen(false)
     setViewOnce(false)
-    setNoSave(false)
+    setNoSave(false); setSpoiler(false)
 
     setPending({
       url,
@@ -1109,7 +1119,7 @@ export default function Messages() {
         await api.upload(f)
 
       setViewOnce(false)
-      setNoSave(false)
+      setNoSave(false); setSpoiler(false)
 
       setPending({
         url: signed_url,
@@ -1145,7 +1155,8 @@ export default function Messages() {
             undefined,
             undefined,
             viewOnce,
-            !noSave
+            !noSave,
+            spoiler && !viewOnce
           )
 
         if (!seen.current.has(m.id)) {
@@ -1159,7 +1170,7 @@ export default function Messages() {
 
         setPending(null)
         setViewOnce(false)
-        setNoSave(false)
+        setNoSave(false); setSpoiler(false)
       } catch (e: any) {
         alert(
           e.message ||
@@ -1389,6 +1400,10 @@ export default function Messages() {
 
       {/* Long-press message action sheet */}
 
+      {reportMsgId && (
+        <ReportDialog targetType="message" targetId={reportMsgId} title="Report message" onClose={() => setReportMsgId(null)} />
+      )}
+
       {messageActions && (
         <div
           className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center"
@@ -1465,6 +1480,20 @@ export default function Messages() {
                         </span>
                       </button>
                     )}
+
+                  {!selected.mine && !selected.deleted && (
+                    <button
+                      type="button"
+                      data-testid="message-report-btn"
+                      onClick={() => { setReportMsgId(selected.id); setMessageActions(null) }}
+                      className="w-full flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-amber-500/10 text-left text-amber-300"
+                    >
+                      <span className="h-10 w-10 rounded-xl bg-amber-500/15 grid place-items-center">
+                        <Flag className="h-5 w-5" />
+                      </span>
+                      <span className="font-medium">Report message</span>
+                    </button>
+                  )}
 
                   <button
                     type="button"
@@ -1632,6 +1661,31 @@ export default function Messages() {
               </span>
             </button>
 
+            {/* Spoiler */}
+
+            <button
+              type="button"
+              data-testid="dm-spoiler-toggle"
+              onClick={() => !viewOnce && setSpoiler(v => !v)}
+              disabled={viewOnce}
+              className={`mt-2 w-full flex items-center gap-3 p-3 rounded-xl border text-left transition ${
+                spoiler && !viewOnce ? 'border-amber-500/60 bg-amber-500/10' : 'border-edge bg-white/5 hover:bg-white/10'
+              } ${viewOnce ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              <span className={`h-9 w-9 grid place-items-center rounded-lg shrink-0 ${spoiler && !viewOnce ? 'bg-amber-500 text-white' : 'bg-white/10 text-slate-300'}`}>
+                <EyeOff className="h-5 w-5" />
+              </span>
+              <span className="flex-1 min-w-0">
+                <span className="block font-medium">Spoiler</span>
+                <span className="block text-xs text-slate-400">
+                  {viewOnce ? 'Not needed for one-time media' : 'Blurred until they tap to reveal'}
+                </span>
+              </span>
+              <span className={`h-6 w-11 rounded-full p-0.5 transition ${spoiler && !viewOnce ? 'bg-amber-500' : 'bg-white/15'}`}>
+                <span className={`block h-5 w-5 rounded-full bg-white transition ${spoiler && !viewOnce ? 'translate-x-5' : ''}`} />
+              </span>
+            </button>
+
             <button
               type="button"
               onClick={
@@ -1692,6 +1746,10 @@ export default function Messages() {
                 </span>
               )}
             </div>
+
+            {viewer.allowSave && !viewer.viewOnce && (
+              <DownloadButton url={viewer.url} type={viewer.type} testId="dm-viewer-download" className="ml-auto mr-2 bg-white/10 hover:bg-white/20" label />
+            )}
 
             {/* Larger close button */}
 
@@ -2285,14 +2343,24 @@ export default function Messages() {
                       ) : m.media_type ===
                           'audio' &&
                         m.media_url ? (
-                        <audio
-                          src={
-                            m.media_url
-                          }
-                          controls
-                          className="max-w-[220px] h-9"
-                        />
+                        <div className="flex items-center gap-1.5">
+                          <audio
+                            src={
+                              m.media_url
+                            }
+                            controls
+                            controlsList={m.allow_save === false ? 'nodownload' : undefined}
+                            className="max-w-[220px] h-9"
+                          />
+                          {m.allow_save !== false && (
+                            <DownloadButton url={m.media_url} type="audio" testId={`dm-audio-download-${m.id}`} className="h-8 w-8 shrink-0" />
+                          )}
+                        </div>
                       ) : m.media_url ? (
+                        <div className="relative rounded-lg overflow-hidden" data-testid={`dm-media-${m.id}`}>
+                        {m.spoiler && !revealedIds.has(m.id) && (
+                          <SpoilerCover compact onReveal={() => toggleReveal(m.id)} testId={`dm-spoiler-${m.id}`} />
+                        )}
                         <button
                           type="button"
                           onClick={() =>
@@ -2335,9 +2403,17 @@ export default function Messages() {
                               false
                                 ? 'select-none'
                                 : ''
-                            }`}
+                            } ${m.spoiler && !revealedIds.has(m.id) ? 'blur-2xl min-w-[160px] min-h-[120px]' : ''}`}
                           />
                         </button>
+                        {m.spoiler && revealedIds.has(m.id) && (
+                          <button type="button" onClick={() => toggleReveal(m.id)} data-testid={`dm-spoiler-hide-${m.id}`}
+                            className="absolute top-1.5 left-1.5 h-7 px-2.5 rounded-full bg-black/60 text-white text-[11px] font-medium">Hide</button>
+                        )}
+                        {m.allow_save !== false && (!m.spoiler || revealedIds.has(m.id)) && (
+                          <DownloadButton url={m.media_url} type={m.media_type || 'image'} testId={`dm-download-${m.id}`} className="absolute bottom-1.5 right-1.5 h-8 w-8" />
+                        )}
+                        </div>
                       ) : (
                         <Linkify
                           text={

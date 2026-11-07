@@ -4,12 +4,13 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { Avatar, timeAgo, Linkify } from '../lib/ui'
 import PostCard from '../components/PostCard'
+import ReportDialog from '../components/ReportDialog'
 import RoleBadge from '../components/RoleBadge'
 import AdultBadge from '../components/AdultBadge'
 import AccountBadge from '../components/AccountBadge'
 import { ProfileStoryAvatar, AddStoryButton } from '../components/Stories'
 import { useAuth } from '../lib/auth'
-import { ArrowLeft, MoreHorizontal, Lock, Loader2, Check, Link as LinkIcon, Camera, Trash2, Ban, VolumeX, ShieldOff, Plus, MessagesSquare, Send, X, Pin, Settings as SettingsIcon, ChevronRight, Heart, Store, Gift, Radio, BarChart3, Bell, BellOff } from 'lucide-react'
+import { ArrowLeft, MoreHorizontal, Lock, Loader2, Check, Link as LinkIcon, Camera, Trash2, Ban, VolumeX, ShieldOff, Plus, MessagesSquare, Send, X, Pin, Settings as SettingsIcon, ChevronRight, Heart, Store, Gift, Radio, BarChart3, Bell, BellOff, Flag } from 'lucide-react'
 
 // Shop tab removed from this row — Shop is reachable via My Links → Shop (ShopTab is exported below).
 const TABS = ['media', 'wall', 'boards', 'audio'] as const
@@ -18,6 +19,7 @@ export default function Profile() {
   const { handle } = useParams()
   const nav = useNavigate()
   const { refresh } = useAuth()
+  const [reporting, setReporting] = useState(false)
   const [p, setP] = useState<any>(null)
   const [posts, setPosts] = useState<any[]>([])
   const [tab, setTab] = useState<Tab>('media')
@@ -107,7 +109,7 @@ export default function Profile() {
           </button>
         ) : (
           <div className="relative">
-            <button onClick={() => setMenuOpen(o => !o)} title="More options" className="h-9 w-9 grid place-items-center rounded-lg hover:bg-white/10 text-slate-300" aria-label="More options">
+            <button onClick={() => setMenuOpen(o => !o)} data-testid="profile-more-btn" title="More options" className="h-9 w-9 grid place-items-center rounded-lg hover:bg-white/10 text-slate-300" aria-label="More options">
               <MoreHorizontal className="h-5 w-5" />
             </button>
             {menuOpen && (
@@ -117,11 +119,13 @@ export default function Profile() {
                   <MenuItem Icon={Ban} tint="text-rose-400" active={p.my_relation === 'block'} onClick={() => setRel('block')} label={p.my_relation === 'block' ? 'Unblock' : 'Block'} />
                   <MenuItem Icon={VolumeX} tint="text-amber-400" active={p.my_relation === 'mute'} onClick={() => setRel('mute')} label={p.my_relation === 'mute' ? 'Unmute' : 'Mute'} />
                   <MenuItem Icon={ShieldOff} tint="text-sky-400" active={p.my_relation === 'restrict'} onClick={() => setRel('restrict')} label={p.my_relation === 'restrict' ? 'Un-restrict' : 'Restrict'} />
+                  <MenuItem Icon={Flag} tint="text-amber-400" active={false} onClick={() => { setMenuOpen(false); setReporting(true) }} label={`Report #${p.handle}`} />
                 </div>
               </>
             )}
           </div>
         )}
+        {reporting && <ReportDialog targetType="user" targetId={p.handle} title={`Report #${p.handle}`} onClose={() => setReporting(false)} />}
       </header>
 
       {/* Scrollable profile area — app bar stays fixed while profile content can collapse away */}
@@ -483,7 +487,7 @@ function WallTab({ handle }: { handle: string }) {
 
 function MenuItem({ Icon, label, tint, active, onClick }: { Icon: any; label: string; tint: string; active?: boolean; onClick: () => void }) {
   return (
-    <button onClick={onClick} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/5 text-left">
+    <button onClick={onClick} data-testid={`profile-menu-${label.split(' ')[0].toLowerCase()}`} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/5 text-left">
       <Icon className={`h-4 w-4 ${tint}`} />
       <span className={active ? 'font-medium' : ''}>{label}</span>
       {active && <Check className="h-4 w-4 ml-auto text-slate-400" />}

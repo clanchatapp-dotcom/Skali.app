@@ -7,6 +7,7 @@ import CallModal from '../components/CallModal'
 import RoleBadge from '../components/RoleBadge'
 import AdultBadge from '../components/AdultBadge'
 import AccountBadge from '../components/AccountBadge'
+import SecretChatToggle from '../components/SecretChatToggle'
 import {
   ArrowLeft,
   Search,
@@ -178,6 +179,13 @@ export default function ConversationInfo() {
               )}
             </div>
           </div>
+
+          {handle && (
+            <div className="bg-panel border border-edge rounded-2xl overflow-hidden [&>button]:border-t-0" data-testid="conversation-secret-section">
+              <SecretChatToggle handle={handle} />
+              <p className="px-4 pb-3 text-xs text-slate-500">Moves this chat to Secret chats, hides its last message in your list, and alerts only say "Someone sent you a message". Either of you can turn it off.</p>
+            </div>
+          )}
 
           {/* Search this conversation */}
           <div className="space-y-3">

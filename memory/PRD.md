@@ -181,3 +181,8 @@ repo (android/ + all root files), re-implemented the feature in canonical `/app/
 - Super admin / Co-admin can request another role's log; staff of that role approve/decline; approved access lasts 24h. Moderators cannot request.
 - Endpoints: GET /api/admin/audit?log=, GET /api/admin/audit/access, POST /api/admin/audit/access/request, POST /api/admin/audit/access/{id}/{approve|decline}. Collection: audit_access.
 - UI: src/components/AuditAccess.tsx inside AuditPanel.
+
+## 2026-06 — Secret DM alerts
+- Per-DM "secret alerts" toggle; either person can switch on/off. While on, push = "Skali / Someone sent you a message" (no name, no text). DMs only.
+- Endpoints: GET/POST /api/dms/{handle}/secret (collection dm_settings). UI: SecretChatToggle in the send-options menu (Messages.tsx).
+- Update: toggle moved to Conversation info; secret DMs move to a separate "Secret chats" list (/messages?box=secret), last message hidden ("Secret chat"), lock icon in chat header (live via WS dm_secret event).

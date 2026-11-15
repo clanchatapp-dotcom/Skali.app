@@ -718,6 +718,10 @@ export const api = {
   dmHistory: (h: string) =>
     req(`/dms/${h}`),
 
+  dmSecret: (h: string) => req(`/dms/${h}/secret`),
+  dmSetSecret: (h: string, secret: boolean) =>
+    req(`/dms/${h}/secret`, { method: 'POST', body: j({ secret }) }),
+
   dmSend: (h: string, text: string, opts?: { silent?: boolean; scheduled_at?: string }) =>
     req(`/dms/${h}`, {
       method: 'POST',

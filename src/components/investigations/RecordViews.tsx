@@ -34,7 +34,7 @@ export function DmsView({ data }: { data: any }) {
       {data.threads.length === 0 && <p className="text-slate-500 text-sm">No direct messages.</p>}
       {data.threads.map((t: any, i: number) => (
         <div key={i} className="border border-edge rounded-xl overflow-hidden">
-          <div className="px-3 py-2 bg-white/5 text-sm font-medium flex items-center gap-2"><Users className="h-3.5 w-3.5 text-slate-400" />with {t.peer.display_name} <span className="text-slate-500">#{t.peer.handle}</span><span className="ml-auto text-[11px] text-slate-500">{t.messages.length} msg</span></div>
+          <div className="px-3 py-2 bg-white/5 text-sm font-medium flex items-center gap-2"><Users className="h-3.5 w-3.5 text-slate-400" />with {t.peer.display_name} <span className="text-slate-500">#{t.peer.handle}</span>{t.secret && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-fuchsia-500/15 text-fuchsia-300" data-testid="inv-dm-secret-tag">Secret chat</span>}<span className="ml-auto text-[11px] text-slate-500">{t.messages.length} msg</span></div>
           <div className="p-3 space-y-1.5 max-h-96 overflow-y-auto">
             {t.messages.map((m: any, k: number) => (
               <div key={k} className={`flex ${m.from_subject ? 'justify-end' : ''}`}>

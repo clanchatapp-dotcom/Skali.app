@@ -91,6 +91,12 @@ export default function Messages() {
     api.dmThreads().then(setThreads).catch(() => {})
   }, [handle])
 
+  const [secretOn, setSecretOn] = useState(false)
+  useEffect(() => {
+    setSecretOn(false)
+    if (handle && handle !== user?.handle) api.dmSecret(handle).then((r: any) => setSecretOn(!!r.secret)).catch(() => {})
+  }, [handle, user?.handle])
+
   // Screenshot protection: block screenshots/recording while a DM thread is open.
   useEffect(() => {
     if (!handle) return
@@ -150,6 +156,8 @@ export default function Messages() {
       ws.onmessage = ev => {
         try {
           const d = JSON.parse(ev.data)
+
+          if (d.type === 'dm_secret') setSecretOn(!!d.secret)
 
           if (
             d.type === 'dm' &&
@@ -1334,6 +1342,10 @@ export default function Messages() {
         user?.handle
     )
 
+  const secretView = searchParams.get('box') === 'secret'
+  const secretThreads = otherThreads.filter(t => t.secret)
+  const listThreads = otherThreads.filter(t => !!t.secret === secretView)
+
   return (
     <div className="flex h-[calc(100dvh-5.25rem-env(safe-area-inset-bottom))] md:h-screen min-h-0 overflow-hidden">
 
@@ -1895,7 +1907,30 @@ export default function Messages() {
           <ChevronRight className="h-4 w-4 text-slate-500" />
         </button>
 
+        {secretView ? (
+          <button onClick={() => nav('/messages')} data-testid="secret-chats-back"
+            className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/5 text-left border-b border-edge/60">
+            <ArrowLeft className="h-4 w-4 text-slate-400" />
+            <Lock className="h-4 w-4 text-fuchsia-400" />
+            <span className="font-medium">Secret chats</span>
+          </button>
+        ) : secretThreads.length > 0 && (
+          <button onClick={() => nav('/messages?box=secret')} data-testid="secret-chats-open"
+            className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/5 text-left border-b border-edge/60">
+            <div className="h-10 w-10 rounded-full bg-fuchsia-500/10 border border-fuchsia-500/30 grid place-items-center shrink-0">
+              <Lock className="h-5 w-5 text-fuchsia-400" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="font-medium truncate">Secret chats</div>
+              <div className="text-sm text-slate-500 truncate">{secretThreads.length} hidden conversation{secretThreads.length === 1 ? '' : 's'}</div>
+            </div>
+            {secretThreads.some(t => t.unread > 0) && <span className="h-2.5 w-2.5 rounded-full bg-rose-500" data-testid="secret-chats-unread" />}
+            <ChevronRight className="h-4 w-4 text-slate-500" />
+          </button>
+        )}
+
         <div className="flex-1 overflow-y-auto">
+          {!secretView && (
           <button
             onClick={() =>
               nav(
@@ -1928,15 +1963,16 @@ export default function Messages() {
               </div>
             </div>
           </button>
+          )}
 
-          {otherThreads.length ===
+          {listThreads.length ===
             0 && (
             <p className="text-slate-500 text-sm p-4">
-              No conversations yet. Open someone's profile and start a chat (DMs are tier-gated).
+              {secretView ? 'No secret chats. Turn on secret chat in a conversation\'s info page.' : 'No conversations yet. Open someone\'s profile and start a chat (DMs are tier-gated).'}
             </p>
           )}
 
-          {otherThreads.map(t => (
+          {listThreads.map(t => (
             <button
               key={t.user.id}
               onClick={() =>
@@ -2092,6 +2128,10 @@ export default function Messages() {
                         }
                         size={14}
                       />
+                    )}
+
+                    {!isSelf && secretOn && (
+                      <Lock className="h-3.5 w-3.5 text-fuchsia-400 shrink-0" data-testid="dm-header-secret-lock" aria-label="Secret chat" />
                     )}
 
                     {!isSelf &&

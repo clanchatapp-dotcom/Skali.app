@@ -2406,10 +2406,11 @@ async def dm_threads(u: dict = Depends(get_current_user)):
             continue
         room = dm_room(u['id'], oid)
         since = await read_marker('dm', room, u['id'])
+        secret = await _dm_secret(room)
         seen[oid] = {'user': {'id': prof['id'], 'handle': prof['handle'],
                               'display_name': prof['display_name'], 'avatar_url': prof.get('avatar_url'), 'role': effective_role(prof), 'account_type': acct_type(prof), 'account_nsfw': is_adult_account(prof), 'nickname': await nickname_for(u['id'], prof['id'])},
-                     'last': ('🎤 Voice message' if m.get('media_type') == 'audio' else '📷 Photo' if m.get('media_url') else dec(m['content_enc'])[:80]), 'created_at': m['created_at'],
-                     'mine': m['sender_id'] == u['id'],
+                     'last': 'Secret chat' if secret else ('🎤 Voice message' if m.get('media_type') == 'audio' else '📷 Photo' if m.get('media_url') else dec(m['content_enc'])[:80]), 'created_at': m['created_at'],
+                     'mine': False if secret else m['sender_id'] == u['id'], 'secret': secret,
                      'unread': await dm_unread_count(room, u['id'], since)}
     return list(seen.values())
 
@@ -2475,8 +2476,42 @@ async def _store_and_deliver_dm(sender: dict, other: dict, *, text: str, media_u
     await manager.broadcast(room, {'type': 'dm', 'message': msg})
     if other['id'] != sender['id'] and not silent:
         preview = '🎤 Voice message' if media_type == 'audio' else ('📷 Photo' if media_url else (text or '')[:100])
-        await push_to_user(other['id'], f"#{sender['handle']}", preview, {'url': f"/messages/{sender['handle']}"})
+        if await _dm_secret(room):
+            await push_to_user(other['id'], 'Skali', 'Someone sent you a message', {'url': '/messages'})
+        else:
+            await push_to_user(other['id'], f"#{sender['handle']}", preview, {'url': f"/messages/{sender['handle']}"})
     return msg
+
+
+async def _dm_secret(room: str) -> bool:
+    return bool((await db.dm_settings.find_one({'room': room}, {'_id': 0, 'secret': 1}) or {}).get('secret'))
+
+
+class DMSecretIn(BaseModel):
+    secret: bool
+
+
+@app.get('/api/dms/{handle}/secret')
+async def dm_secret_get(handle: str, u: dict = Depends(get_current_user)):
+    other = await db.profiles.find_one({'handle': handle}, {'_id': 0, 'id': 1})
+    if not other:
+        raise HTTPException(404, 'User not found')
+    return {'secret': await _dm_secret(dm_room(u['id'], other['id']))}
+
+
+@app.post('/api/dms/{handle}/secret')
+async def dm_secret_set(handle: str, body: DMSecretIn, u: dict = Depends(get_current_user)):
+    """Secret chat: either person can switch it; while on, push alerts hide the sender and text."""
+    other = await db.profiles.find_one({'handle': handle}, {'_id': 0, 'id': 1})
+    if not other:
+        raise HTTPException(404, 'User not found')
+    room = dm_room(u['id'], other['id'])
+    await db.dm_settings.update_one({'room': room}, {'$set': {'room': room, 'secret': body.secret, 'secret_by': u['id'],
+                                                              'updated_at': datetime.now(timezone.utc).isoformat()}}, upsert=True)
+    await manager.broadcast(room, {'type': 'dm_secret', 'secret': body.secret})
+    await db.dm_secret_log.insert_one({'room': room, 'by': u['id'], 'by_handle': u['handle'], 'secret': body.secret,
+                                       'at': datetime.now(timezone.utc).isoformat()})
+    return {'secret': body.secret}
 
 
 @app.post('/api/dms/{handle}')
@@ -4258,6 +4293,7 @@ async def inv_dms(handle: str, reason: str = '', a: dict = Depends(require_inv_s
     for peer_id, msgs in threads.items():
         peer = await db.profiles.find_one({'id': peer_id}, {'_id': 0})
         out.append({'peer': {'handle': peer['handle'], 'display_name': peer['display_name']} if peer else {'handle': 'unknown', 'display_name': 'Unknown'},
+                    'secret': await _dm_secret(dm_room(uid, peer_id)),
                     'messages': msgs})
     out.sort(key=lambda t: t['messages'][-1]['created_at'] if t['messages'] else '', reverse=True)
     await audit(a, 'inv_dms_open', prof['handle'], f'case {case["id"][:8]}; {len(out)} DM thread(s)', restricted=True)

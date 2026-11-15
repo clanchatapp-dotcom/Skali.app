@@ -175,3 +175,9 @@ repo (android/ + all root files), re-implemented the feature in canonical `/app/
 - Profile "Live" tab (mockup #4) + profile-while-live banner (mockup #7). Creator Studio analytics (#6).
 - Stream thumbnails/preview frames on discovery cards.
 - Minor: dedicated 400 for missing group_id; rate-limit /api/live/start.
+
+## 2026-06 — Role-separated audit logs with access requests
+- Super admin, Co-admin and Moderator each see only their own role's audit log (all staff of that role share it).
+- Super admin / Co-admin can request another role's log; staff of that role approve/decline; approved access lasts 24h. Moderators cannot request.
+- Endpoints: GET /api/admin/audit?log=, GET /api/admin/audit/access, POST /api/admin/audit/access/request, POST /api/admin/audit/access/{id}/{approve|decline}. Collection: audit_access.
+- UI: src/components/AuditAccess.tsx inside AuditPanel.

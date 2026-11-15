@@ -911,8 +911,13 @@ export const api = {
       method: 'POST',
     }),
 
-  adminAudit: (q = '', action = '') =>
-    req(`/admin/audit?q=${encodeURIComponent(q)}&action=${encodeURIComponent(action)}`),
+  adminAudit: (q = '', action = '', log = '') =>
+    req(`/admin/audit?q=${encodeURIComponent(q)}&action=${encodeURIComponent(action)}&log=${encodeURIComponent(log)}`),
+  auditAccess: () => req('/admin/audit/access'),
+  auditAccessRequest: (log_role: string) =>
+    req('/admin/audit/access/request', { method: 'POST', body: j({ log_role }) }),
+  auditAccessDecide: (id: string, decision: 'approve' | 'decline') =>
+    req(`/admin/audit/access/${id}/${decision}`, { method: 'POST' }),
   adminReportAssign: (id: string, assign: boolean) =>
     req(`/admin/reports/${id}/assign`, { method: 'POST', body: j({ assign }) }),
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../lib/api'
 import { ScrollText, Lock, Loader2, Search, ShieldCheck } from 'lucide-react'
 import { ROLE_META } from './RoleBadge'
+import AuditAccess from './AuditAccess'
 
 const FILTERS = [
   { key: '', label: 'All' },
@@ -34,10 +35,11 @@ export default function AuditPanel() {
   const [action, setAction] = useState('')
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  const [log, setLog] = useState('')
 
-  const load = async (act = action) => {
+  const load = async (act = action, lg = log) => {
     setLoading(true)
-    try { setData(await api.adminAudit(q.trim(), act)) } catch (e: any) { alert(e.message); setData(null) }
+    try { setData(await api.adminAudit(q.trim(), act, lg)) } catch (e: any) { alert(e.message); setData(null) }
     setLoading(false)
   }
   useEffect(() => { load() }, [])
@@ -48,8 +50,10 @@ export default function AuditPanel() {
       <div className="bg-panel border border-edge rounded-2xl p-3 text-xs text-slate-400 flex items-start gap-2">
         <ShieldCheck className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
         <span>Permanent legal record. Entries cannot be edited or deleted by anyone, and each one is chained to the previous entry so tampering is detectable.
-          {data && !full && ' You are seeing general moderation actions only.'}</span>
+          {data && !full && ' You are seeing general moderation actions only.'}
+          {data && ` Showing the ${ROLE_META[data.log]?.label || data.log} log. Other roles' logs need an approved request (24 hours).`}</span>
       </div>
+      <AuditAccess log={data?.log || log} onPick={lg => { setLog(lg); load(action, lg) }} />
       <div className="flex gap-2">
         <div className="flex-1 flex items-center gap-2 bg-ink border border-edge rounded-xl px-3 focus-within:border-brand">
           <Search className="h-4 w-4 text-slate-500" />

@@ -3939,10 +3939,28 @@ def _private_audit_filter(me_id: str) -> dict:
     ]}
 
 
+AUDIT_ACCESS_HOURS = 24
+
+
+async def _audit_grant(me_id: str, log_role: str) -> Optional[dict]:
+    now = datetime.now(timezone.utc).isoformat()
+    return await db.audit_access.find_one({'requester_id': me_id, 'log_role': log_role, 'status': 'approved',
+                                           'expires_at': {'$gt': now}}, {'_id': 0})
+
+
 @app.get('/api/admin/audit')
-async def admin_audit(q: str = '', action: str = '', limit: int = 200, a: dict = Depends(require_mod)):
+async def admin_audit(q: str = '', action: str = '', limit: int = 200, log: str = '', a: dict = Depends(require_mod)):
     full = is_full_admin(a)
+    mine = audit_log_of(a)
+    target = log.strip() or mine
+    if target not in AUDIT_LOGS:
+        raise HTTPException(400, 'Unknown audit log')
+    if target != mine:
+        grant = await _audit_grant(a['id'], target) if full else None
+        if not grant:
+            raise HTTPException(403, 'Request access to view this audit log')
     query: dict = _private_audit_filter(a['id']) if full else _moderator_audit_filter()
+    query = {'$and': [query, {'log_role': target}]}
     conds = []
     if q.strip():
         rx = {'$regex': re.escape(q.strip().lstrip('#@')), '$options': 'i'}
@@ -3954,7 +3972,60 @@ async def admin_audit(q: str = '', action: str = '', limit: int = 200, a: dict =
     out = []
     async for r in db.audit.find(query, {'_id': 0}).sort('created_at', -1).limit(max(1, min(limit, 500))):
         out.append(r)
-    return {'scope': 'full' if full else 'general', 'entries': out}
+    return {'scope': 'full' if full else 'general', 'log': target, 'my_log': mine, 'entries': out}
+
+
+class AuditAccessIn(BaseModel):
+    log_role: str
+
+
+@app.get('/api/admin/audit/access')
+async def audit_access_list(a: dict = Depends(require_mod)):
+    mine = audit_log_of(a)
+    now = datetime.now(timezone.utc).isoformat()
+    incoming = [r async for r in db.audit_access.find({'log_role': mine, 'status': 'pending'}, {'_id': 0}).sort('created_at', -1)]
+    outgoing = [r async for r in db.audit_access.find({'requester_id': a['id']}, {'_id': 0}).sort('created_at', -1).limit(50)]
+    active = sorted({r['log_role'] for r in outgoing if r['status'] == 'approved' and r.get('expires_at', '') > now})
+    return {'my_log': mine, 'can_request': is_full_admin(a), 'incoming': incoming, 'outgoing': outgoing, 'active': active}
+
+
+@app.post('/api/admin/audit/access/request')
+async def audit_access_request(body: AuditAccessIn, a: dict = Depends(require_full_admin)):
+    mine = audit_log_of(a)
+    if body.log_role not in AUDIT_LOGS or body.log_role == mine:
+        raise HTTPException(400, 'Choose another role\'s audit log')
+    if await _audit_grant(a['id'], body.log_role):
+        return {'ok': True, 'status': 'approved'}
+    existing = await db.audit_access.find_one({'requester_id': a['id'], 'log_role': body.log_role, 'status': 'pending'}, {'_id': 0})
+    if existing:
+        return {'ok': True, 'status': 'pending', 'id': existing['id']}
+    doc = {'id': str(uuid.uuid4()), 'log_role': body.log_role, 'requester_id': a['id'], 'requester_handle': a['handle'],
+           'requester_role': mine, 'status': 'pending', 'created_at': datetime.now(timezone.utc).isoformat()}
+    await db.audit_access.insert_one(dict(doc))
+    await audit(a, 'audit_access_request', body.log_role, f'#{a["handle"]} asked to view the {body.log_role} log')
+    return {'ok': True, 'status': 'pending', 'id': doc['id']}
+
+
+@app.post('/api/admin/audit/access/{req_id}/{decision}')
+async def audit_access_decide(req_id: str, decision: str, a: dict = Depends(require_mod)):
+    if decision not in ('approve', 'decline'):
+        raise HTTPException(400, 'Invalid decision')
+    r = await db.audit_access.find_one({'id': req_id}, {'_id': 0})
+    if not r:
+        raise HTTPException(404, 'Request not found')
+    if r['log_role'] != audit_log_of(a):
+        raise HTTPException(403, 'Only staff who own this audit log can decide')
+    if r['status'] != 'pending':
+        raise HTTPException(400, f'Request already {r["status"]}')
+    now = datetime.now(timezone.utc)
+    upd = {'status': 'approved' if decision == 'approve' else 'declined', 'decided_at': now.isoformat(),
+           'decided_by': a['handle']}
+    if decision == 'approve':
+        upd['expires_at'] = (now + timedelta(hours=AUDIT_ACCESS_HOURS)).isoformat()
+    await db.audit_access.update_one({'id': req_id}, {'$set': upd})
+    await audit(a, f'audit_access_{upd["status"]}', r['requester_handle'],
+                f'{r["log_role"]} log' + (f' for {AUDIT_ACCESS_HOURS}h' if decision == 'approve' else ''))
+    return {'ok': True, 'status': upd['status']}
 
 
 # ----------------------------- Admin: flag accounts & discreet DM review -----------------------------

@@ -186,3 +186,4 @@ repo (android/ + all root files), re-implemented the feature in canonical `/app/
 - Per-DM "secret alerts" toggle; either person can switch on/off. While on, push = "Skali / Someone sent you a message" (no name, no text). DMs only.
 - Endpoints: GET/POST /api/dms/{handle}/secret (collection dm_settings). UI: SecretChatToggle in the send-options menu (Messages.tsx).
 - Update: toggle moved to Conversation info; secret DMs move to a separate "Secret chats" list (/messages?box=secret), last message hidden ("Secret chat"), lock icon in chat header (live via WS dm_secret event).
+- Update: media in secret chats is permanently unsavable (existing media locked when secret is turned on; new media forced allow_save=false). Investigations/legal access unaffected; secret toggles logged in dm_secret_log.

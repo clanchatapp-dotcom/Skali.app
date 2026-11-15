@@ -2462,6 +2462,8 @@ async def _store_and_deliver_dm(sender: dict, other: dict, *, text: str, media_u
     Shared by the instant-send endpoint and the scheduled-DM worker."""
     room = dm_room(sender['id'], other['id'])
     created = datetime.now(timezone.utc).isoformat()
+    if await _dm_secret(room):
+        allow_save_flag = False  # media in a secret chat can never be saved
     doc = {'id': str(uuid.uuid4()), 'room': room, 'participants': [sender['id'], other['id']],
            'sender_id': sender['id'], 'content_enc': enc(text),
            'media_url': media_url, 'media_type': media_type, 'duration': duration,
@@ -2511,6 +2513,9 @@ async def dm_secret_set(handle: str, body: DMSecretIn, u: dict = Depends(get_cur
     await manager.broadcast(room, {'type': 'dm_secret', 'secret': body.secret})
     await db.dm_secret_log.insert_one({'room': room, 'by': u['id'], 'by_handle': u['handle'], 'secret': body.secret,
                                        'at': datetime.now(timezone.utc).isoformat()})
+    if body.secret:
+        # Everything already in the chat becomes permanently unsavable too.
+        await db.dms.update_many({'room': room}, {'$set': {'allow_save': False}})
     return {'secret': body.secret}
 
 

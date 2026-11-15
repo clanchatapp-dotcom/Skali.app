@@ -157,7 +157,10 @@ export default function Messages() {
         try {
           const d = JSON.parse(ev.data)
 
-          if (d.type === 'dm_secret') setSecretOn(!!d.secret)
+          if (d.type === 'dm_secret') {
+            setSecretOn(!!d.secret)
+            if (d.secret) setMsgs(p => p.map(m => ({ ...m, allow_save: false })))
+          }
 
           if (
             d.type === 'dm' &&

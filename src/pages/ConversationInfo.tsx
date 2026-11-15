@@ -274,6 +274,8 @@ export default function ConversationInfo() {
                       <img
                         src={m.media_url}
                         alt="shared media"
+                        draggable={m.allow_save !== false}
+                        onContextMenu={m.allow_save === false ? e => e.preventDefault() : undefined}
                         className="h-full w-full object-cover"
                         loading="lazy"
                       />
@@ -303,6 +305,9 @@ export default function ConversationInfo() {
               src={lightbox.media_url}
               controls
               autoPlay
+              controlsList={lightbox.allow_save === false ? 'nodownload' : undefined}
+              disablePictureInPicture={lightbox.allow_save === false}
+              onContextMenu={lightbox.allow_save === false ? e => e.preventDefault() : undefined}
               className="max-h-[85vh] max-w-full rounded-xl"
               onClick={e => e.stopPropagation()}
             />
@@ -310,7 +315,9 @@ export default function ConversationInfo() {
             <img
               src={lightbox.media_url}
               alt="shared media"
-              className="max-h-[85vh] max-w-full rounded-xl object-contain"
+              draggable={lightbox.allow_save !== false}
+              onContextMenu={lightbox.allow_save === false ? e => e.preventDefault() : undefined}
+              className={`max-h-[85vh] max-w-full rounded-xl object-contain ${lightbox.allow_save === false ? 'select-none' : ''}`}
               onClick={e => e.stopPropagation()}
             />
           )}

@@ -719,6 +719,15 @@ export const api = {
     req(`/dms/${h}`),
 
   dmSecret: (h: string) => req(`/dms/${h}/secret`),
+  nsfwStatus: () => req('/nsfw/status'),
+  nsfwSetPin: (pin: string, current_pin?: string) =>
+    req('/nsfw/pin', { method: 'POST', body: j({ pin, current_pin }) }),
+  nsfwUnlock: (pin: string) => req('/nsfw/unlock', { method: 'POST', body: j({ pin }) }),
+  nsfwResetRequest: () => req('/nsfw/reset-request', { method: 'POST' }),
+  adminNsfwResets: () => req('/admin/nsfw-resets'),
+  adminNsfwReset: (handle: string) => req(`/admin/nsfw-resets/${encodeURIComponent(handle)}/reset`, { method: 'POST' }),
+  nsfwFeed: (session: string) => req('/nsfw/feed', { headers: { 'X-NSFW-Session': session } }),
+  nsfwCreators: (session: string) => req('/nsfw/creators', { headers: { 'X-NSFW-Session': session } }),
   dmSetSecret: (h: string, secret: boolean) =>
     req(`/dms/${h}/secret`, { method: 'POST', body: j({ secret }) }),
 

@@ -1117,7 +1117,10 @@ async def interests_feed(u: dict = Depends(get_current_user)):
     if not keys:
         return []
     out = []
+    adult_ids = await adult_author_ids()
     async for p in db.posts.find({'tier': 'public', 'tags': {'$in': keys}}).sort('created_at', -1).limit(80):
+        if in_adult_section(p, adult_ids):
+            continue
         if p['author_id'] != u['id'] and await is_blocked_between(u['id'], p['author_id']):
             continue
         out.append(await post_out(p, u['id']))
@@ -1619,10 +1622,13 @@ async def feed(scope: str = 'general', u: dict = Depends(get_current_user)):
     # Fail-closed NSFW gate (Block 2): NSFW is hidden unless the viewer has the Comfort-Zone
     # NSFW toggle ON *and* is an age-verified adult. Unverified/minor => always hidden.
     hide_nsfw = (_cz.get('nsfw') is not True) or (not is_age_verified_adult(vp))
+    adult_ids = await adult_author_ids()
     out = []
     async for p in db.posts.find(q).sort('created_at', -1).limit(150):
         if p['author_id'] in hidden and p['author_id'] != u['id']:
             continue  # muted or blocked
+        if in_adult_section(p, adult_ids):
+            continue  # adult content lives only in the PIN-locked NSFW section (web)
         if p['author_id'] != u['id']:
             if hide_ai and p.get('ai_label', 'none') != 'none':
                 continue  # comfort zone: AI content hidden
@@ -1638,13 +1644,152 @@ async def feed(scope: str = 'general', u: dict = Depends(get_current_user)):
 @app.get('/api/reels')
 async def reels(u: dict = Depends(get_current_user)):
     """TikTok-style feed: video posts the viewer can see, newest first."""
+    adult_ids = await adult_author_ids()
     out = []
     async for p in db.posts.find({'media_type': 'video', 'media_url': {'$ne': None}}).sort('created_at', -1).limit(150):
+        if in_adult_section(p, adult_ids):
+            continue
         if await can_view(u['id'], p):
             out.append(await post_out(p, u['id']))
         if len(out) >= 40:
             break
     return out
+
+
+# ----------------------------- NSFW section (web only, 6-digit code) -----------------------------
+NSFW_MAX_FAILS = 5
+NSFW_LOCK_MIN = 15
+NSFW_SESSION_MIN = 30
+
+
+async def adult_author_ids() -> set:
+    return {p['id'] async for p in db.profiles.find({'$or': [{'account_nsfw': True}, {'creator_type': 'adult'}]}, {'_id': 0, 'id': 1})}
+
+
+def in_adult_section(p: dict, adult_ids: set) -> bool:
+    # NSFW-tagged posts, plus adult creators' Tier 3 (Inner Circle) posts; their Tier 1/2 posts stay in normal feeds.
+    return bool(p.get('nsfw')) or (p['author_id'] in adult_ids and p.get('tier') == 'inner')
+
+
+class NsfwPinIn(BaseModel):
+    pin: str
+    current_pin: Optional[str] = None
+
+
+def _require_adult(u: dict):
+    if not is_age_verified_adult(u):
+        raise HTTPException(403, 'Verify your age to access adult content')
+
+
+async def require_nsfw_session(x_nsfw_session: Optional[str] = Header(None), u: dict = Depends(get_current_user)) -> dict:
+    _require_adult(u)
+    if not x_nsfw_session:
+        raise HTTPException(401, 'Enter your 6-digit code')
+    now = datetime.now(timezone.utc).isoformat()
+    if not await db.nsfw_sessions.find_one({'token_hash': hashlib.sha256(x_nsfw_session.encode()).hexdigest(),
+                                            'user_id': u['id'], 'expires_at': {'$gt': now}}):
+        raise HTTPException(401, 'Enter your 6-digit code')
+    return u
+
+
+@app.get('/api/nsfw/status')
+async def nsfw_status(u: dict = Depends(get_current_user)):
+    rec = await db.nsfw_pins.find_one({'user_id': u['id']}, {'_id': 0})
+    now = datetime.now(timezone.utc).isoformat()
+    return {'eligible': is_age_verified_adult(u), 'has_pin': bool(rec),
+            'reset_pending': bool(await db.nsfw_reset_requests.find_one({'user_id': u['id'], 'status': 'pending'})),
+            'locked_until': rec.get('locked_until') if rec and (rec.get('locked_until') or '') > now else None}
+
+
+async def _check_nsfw_pin(u: dict, pin: str) -> dict:
+    rec = await db.nsfw_pins.find_one({'user_id': u['id']})
+    if not rec:
+        raise HTTPException(400, 'Create your 6-digit code first')
+    now = datetime.now(timezone.utc)
+    if (rec.get('locked_until') or '') > now.isoformat():
+        raise HTTPException(423, f'Too many wrong codes. Try again after {rec["locked_until"][11:16]} UTC.')
+    if not hmac.compare_digest(_pw_hash((pin or '').strip(), rec['salt']), rec['hash']):
+        fails = rec.get('failed', 0) + 1
+        locked = fails >= NSFW_MAX_FAILS
+        upd = {'failed': 0, 'locked_until': (now + timedelta(minutes=NSFW_LOCK_MIN)).isoformat()} if locked else {'failed': fails}
+        await db.nsfw_pins.update_one({'user_id': u['id']}, {'$set': upd})
+        if locked:
+            raise HTTPException(423, f'Too many wrong codes. Locked for {NSFW_LOCK_MIN} minutes.')
+        raise HTTPException(403, f'Wrong code. {NSFW_MAX_FAILS - fails} attempt(s) left.')
+    await db.nsfw_pins.update_one({'user_id': u['id']}, {'$set': {'failed': 0}, '$unset': {'locked_until': ''}})
+    return rec
+
+
+@app.post('/api/nsfw/pin')
+async def nsfw_set_pin(body: NsfwPinIn, u: dict = Depends(get_current_user)):
+    """Create the code, or change it (current_pin required once one exists)."""
+    _require_adult(u)
+    pin = _valid_pin(body.pin)
+    if await db.nsfw_pins.find_one({'user_id': u['id']}):
+        await _check_nsfw_pin(u, body.current_pin or '')
+    salt = secrets.token_hex(16)
+    await db.nsfw_pins.update_one({'user_id': u['id']}, {'$set': {'user_id': u['id'], 'salt': salt, 'hash': _pw_hash(pin, salt),
+                                                                  'failed': 0, 'updated_at': datetime.now(timezone.utc).isoformat()},
+                                                         '$unset': {'locked_until': ''}}, upsert=True)
+    return {'ok': True}
+
+
+@app.post('/api/nsfw/unlock')
+async def nsfw_unlock(body: NsfwPinIn, u: dict = Depends(get_current_user)):
+    _require_adult(u)
+    await _check_nsfw_pin(u, body.pin)
+    token = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    await db.nsfw_sessions.insert_one({'token_hash': hashlib.sha256(token.encode()).hexdigest(), 'user_id': u['id'],
+                                       'expires_at': (now + timedelta(minutes=NSFW_SESSION_MIN)).isoformat(), 'created_at': now.isoformat()})
+    return {'token': token}
+
+
+@app.get('/api/nsfw/feed')
+async def nsfw_feed(u: dict = Depends(require_nsfw_session)):
+    adult_ids = await adult_author_ids()
+    hidden = await hidden_author_ids(u['id'])
+    out = []
+    async for p in db.posts.find({'$or': [{'nsfw': True}, {'author_id': {'$in': list(adult_ids)}, 'tier': 'inner'}]}).sort('created_at', -1).limit(150):
+        if p['author_id'] in hidden and p['author_id'] != u['id']:
+            continue
+        if await can_view(u['id'], p):
+            out.append(await post_out(p, u['id']))
+        if len(out) >= 60:
+            break
+    return out
+
+
+@app.get('/api/nsfw/creators')
+async def nsfw_creators(u: dict = Depends(require_nsfw_session)):
+    hidden = await hidden_author_ids(u['id'])
+    out = []
+    async for p in db.profiles.find({'$or': [{'account_nsfw': True}, {'creator_type': 'adult'}], 'is_minor': {'$ne': True}}, {'_id': 0}).limit(200):
+        if p['id'] in hidden or await is_blocked_between(u['id'], p['id']):
+            continue
+        out.append(await public_profile(p, u['id']))
+        if len(out) >= 100:
+            break
+    return out
+
+
+@app.post('/api/nsfw/reset-request')
+async def nsfw_reset_request(u: dict = Depends(get_current_user)):
+    """Forgot code: asks Super admins / Co-admins to reset it."""
+    _require_adult(u)
+    if not await db.nsfw_pins.find_one({'user_id': u['id']}):
+        raise HTTPException(400, 'You have no code yet. Create one instead.')
+    if await db.nsfw_reset_requests.find_one({'user_id': u['id'], 'status': 'pending'}):
+        return {'ok': True, 'status': 'pending'}
+    await db.nsfw_reset_requests.insert_one({'id': str(uuid.uuid4()), 'user_id': u['id'], 'handle': u['handle'],
+                                             'display_name': u.get('display_name'), 'status': 'pending',
+                                             'created_at': datetime.now(timezone.utc).isoformat()})
+    async for p in db.profiles.find({}, {'_id': 0}):
+        if effective_role(p) in FULL_ADMIN_ROLES:
+            await add_activity(p['id'], 'admin', u, 'requested an adult section code reset')
+            await push_to_user(p['id'], 'Code reset request', f"#{u['handle']} asked for an adult section code reset", {'url': '/admin'})
+    return {'ok': True, 'status': 'pending'}
+
 
 
 class WallPost(BaseModel):
@@ -3378,6 +3523,26 @@ async def require_super(u: dict = Depends(get_current_user)) -> dict:
     if effective_role(u) == 'super_admin':
         return u
     raise HTTPException(403, 'Super admin access required')
+
+
+@app.get('/api/admin/nsfw-resets')
+async def admin_nsfw_resets(a: dict = Depends(require_full_admin)):
+    return [r async for r in db.nsfw_reset_requests.find({'status': 'pending'}, {'_id': 0}).sort('created_at', -1).limit(200)]
+
+
+@app.post('/api/admin/nsfw-resets/{handle}/reset')
+async def admin_nsfw_reset(handle: str, a: dict = Depends(require_super)):
+    """Super admin wipes a user's adult section code; they create a new one next visit."""
+    prof = await db.profiles.find_one({'handle': handle.lstrip('#@')}, {'_id': 0})
+    if not prof:
+        raise HTTPException(404, 'User not found')
+    await db.nsfw_pins.delete_one({'user_id': prof['id']})
+    await db.nsfw_sessions.delete_many({'user_id': prof['id']})
+    await db.nsfw_reset_requests.update_many({'user_id': prof['id'], 'status': 'pending'},
+                                             {'$set': {'status': 'done', 'done_by': a['handle'], 'done_at': datetime.now(timezone.utc).isoformat()}})
+    await add_activity(prof['id'], 'admin', a, 'reset your adult section code. Create a new one next time you open it.')
+    await audit(a, 'nsfw_code_reset', prof['handle'], 'adult section code reset')
+    return {'ok': True}
 
 
 def _ban_guard(admin: dict):

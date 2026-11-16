@@ -187,3 +187,10 @@ repo (android/ + all root files), re-implemented the feature in canonical `/app/
 - Endpoints: GET/POST /api/dms/{handle}/secret (collection dm_settings). UI: SecretChatToggle in the send-options menu (Messages.tsx).
 - Update: toggle moved to Conversation info; secret DMs move to a separate "Secret chats" list (/messages?box=secret), last message hidden ("Secret chat"), lock icon in chat header (live via WS dm_secret event).
 - Update: media in secret chats is permanently unsavable (existing media locked when secret is turned on; new media forced allow_save=false). Investigations/legal access unaffected; secret toggles logged in dm_secret_log.
+
+## 2026-06 — Web-only NSFW section (6-digit code)
+- Age-verified adults see an 18+ (Flame) icon in bottom nav + sidebar (web only, hidden on native). /nsfw asks for the user's own 6-digit code every visit (create/change on the gate; 5 wrong -> 15 min lock; 30-min in-memory session).
+- Tabs: Feed (posts tagged NSFW + all posts from adult accounts) and Creators (adult accounts).
+- Regular feed, reels and interests feed now exclude NSFW posts and ALL posts from adult accounts.
+- Endpoints: GET /api/nsfw/status, POST /api/nsfw/pin, POST /api/nsfw/unlock, GET /api/nsfw/feed, GET /api/nsfw/creators (X-NSFW-Session header). Collections nsfw_pins, nsfw_sessions. Test: tests/nsfw_check.py
+- Update: only adult creators' Tier 3 (Inner Circle) posts + NSFW-tagged posts go to the NSFW section; their Tier 1/2 posts show in normal feeds. 'Forgot code' request (POST /api/nsfw/reset-request) notifies Super/Co-admins (activity + push); Admin > Code resets tab (GET /api/admin/nsfw-resets); Super admin-only reset (POST /api/admin/nsfw-resets/{handle}/reset).

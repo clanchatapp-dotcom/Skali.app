@@ -17,6 +17,7 @@ import {
   Shield,
   Settings,
   Film,
+  Flame,
   Users2,
   Users,
   Plus,
@@ -84,6 +85,13 @@ export default function Layout() {
 
   const [unread, setUnread] =
     useState(0)
+
+  // Web only: adult section icon appears once the account is age-verified.
+  const [nsfwOk, setNsfwOk] = useState(false)
+  useEffect(() => {
+    if (isNative || !user) return
+    api.nsfwStatus().then((r: any) => setNsfwOk(!!r.eligible)).catch(() => setNsfwOk(false))
+  }, [user])
 
   const [dob, setDob] =
     useState('')
@@ -436,6 +444,13 @@ export default function Layout() {
           Reels
         </NavLink>
 
+        {nsfwOk && (
+          <NavLink to="/nsfw" data-testid="sidebar-nsfw" className={({ isActive }) => linkCls(isActive)}>
+            <Flame className="h-5 w-5 text-rose-400" />
+            Adult
+          </NavLink>
+        )}
+
         {(user?.is_admin ||
           user?.can_moderate || (user as any)?.is_support_bot) && (
           <NavLink
@@ -594,6 +609,22 @@ export default function Layout() {
           </NavLink>
           </span>
         ))}
+
+        {nsfwOk && (
+          <NavLink
+            to="/nsfw"
+            data-testid="bottom-nav-nsfw"
+            aria-label="Adult content"
+            className={({ isActive }) =>
+              `flex flex-1 flex-col items-center gap-0.5 text-[10px] font-semibold py-1.5 rounded-2xl transition-colors ${
+                isActive ? 'synth-nav-active text-white' : 'text-rose-400'
+              }`
+            }
+          >
+            <Flame className="h-5 w-5" />
+            18+
+          </NavLink>
+        )}
 
         <NavLink
           to={`/u/${user?.handle}`}

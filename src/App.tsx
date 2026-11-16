@@ -24,6 +24,7 @@ import Plans from './pages/Plans'
 import Connections from './pages/Connections'
 import Groups from './pages/Groups'
 import Reels from './pages/Reels'
+import Nsfw from './pages/Nsfw'
 import Live from './pages/Live'
 import StreamWatch from './pages/StreamWatch'
 import StreamBoundary from './components/stream/StreamBoundary'
@@ -83,6 +84,7 @@ export default function App() {
           <Route path="/connections" element={<Connections />} />
           <Route path="/groups" element={<Groups />} />
           <Route path="/reels" element={<Reels />} />
+          <Route path="/nsfw" element={<Nsfw />} />
           <Route path="/live" element={<Live />} />
           <Route path="/admin" element={<Admin />} />
           <Route path="/u/:handle/links" element={<Links />} />

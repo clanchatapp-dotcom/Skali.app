@@ -8,7 +8,8 @@ import { timeAgo } from '../lib/ui'
 import RoleBadge, { ROLE_META } from '../components/RoleBadge'
 import AdultBadge from '../components/AdultBadge'
 import AuditPanel from '../components/AuditPanel'
-import { Shield, Flag, AlertTriangle, Users, ScrollText, Ban, Loader2, Check, Trash2, X, Lock, UserCog, Crown, ScanEye, Bookmark, StickyNote, Star, MessageCircle, Send, Hand } from 'lucide-react'
+import { Shield, Flag, AlertTriangle, Users, ScrollText, Ban, Loader2, Check, Trash2, X, Lock, UserCog, Crown, ScanEye, Bookmark, StickyNote, Star, MessageCircle, Send, Hand, KeyRound } from 'lucide-react'
+import NsfwResetsPanel from '../components/nsfw/NsfwResetsPanel'
 
 // `min` = lowest staff level that can see the tab: mod (all staff) · full (Co-admin+) · super.
 const LEVEL: Record<string, number> = { moderator: 1, co_admin: 2, super_admin: 3 }
@@ -23,6 +24,7 @@ const TABS = [
   { key: 'creators', label: 'Creators', icon: Star, min: 'full' },
   { key: 'investigations', label: 'Investigations', icon: Lock, min: 'full' },
   { key: 'audit', label: 'Audit log', icon: ScrollText, min: 'mod' },
+  { key: 'coderesets', label: 'Code resets', icon: KeyRound, min: 'full' },
   { key: 'roles', label: 'Roles', icon: Crown, min: 'super' },
   { key: 'admins', label: 'Admins', icon: UserCog, min: 'super' },
 ]
@@ -117,7 +119,7 @@ export default function Admin() {
       else if (tab === 'support') { await loadSupport(); setData([]) }
       else if (tab === 'admins') { await loadAdmins(); setData([]) }
       else if (tab === 'roles') { await loadRoles(); setData([]) }
-      else if (tab === 'audit' || tab === 'investigations') setData([])
+      else if (tab === 'audit' || tab === 'investigations' || tab === 'coderesets') setData([])
     } catch { setData([]) } finally { setLoading(false) }
   }
   useEffect(() => {
@@ -601,6 +603,7 @@ export default function Admin() {
             ))}
 
             {tab === 'audit' && <AuditPanel />}
+            {tab === 'coderesets' && <NsfwResetsPanel isSuper={isSuper} />}
           </div>
         )}
 

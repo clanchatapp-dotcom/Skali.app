@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { api, getToken, wsDmUrl } from '../lib/api'
+import { api, getToken, wsDmUrl, setDmSecretScope } from '../lib/api'
 import { Avatar, Linkify } from '../lib/ui'
 import { useAuth } from '../lib/auth'
 import CallModal from '../components/CallModal'
@@ -91,11 +91,12 @@ export default function Messages() {
     api.dmThreads().then(setThreads).catch(() => {})
   }, [handle])
 
-  const [secretOn, setSecretOn] = useState(false)
-  useEffect(() => {
-    setSecretOn(false)
-    if (handle && handle !== user?.handle) api.dmSecret(handle).then((r: any) => setSecretOn(!!r.secret)).catch(() => {})
-  }, [handle, user?.handle])
+  // Secret chat = a second, separate conversation with the same person (?secret=1).
+  const secretChat = !!handle && handle !== user?.handle && searchParams.get('secret') === '1'
+  setDmSecretScope(secretChat)
+  const [secretOn, setSecretOn] = useState(secretChat)
+  useEffect(() => { setSecretOn(secretChat) }, [secretChat])
+  useEffect(() => () => setDmSecretScope(false), [])
 
   // Screenshot protection: block screenshots/recording while a DM thread is open.
   useEffect(() => {
@@ -157,7 +158,7 @@ export default function Messages() {
         try {
           const d = JSON.parse(ev.data)
 
-          if (d.type === 'dm_secret') {
+          if (d.type === 'dm_secret' && secretChat) {
             setSecretOn(!!d.secret)
             if (d.secret) setMsgs(p => p.map(m => ({ ...m, allow_save: false })))
           }
@@ -242,7 +243,7 @@ export default function Messages() {
       stop = true
       wsRef.current?.close()
     }
-  }, [handle])
+  }, [handle, secretChat])
 
   useEffect(() => {
     endRef.current?.scrollIntoView({
@@ -1971,7 +1972,7 @@ export default function Messages() {
           {listThreads.length ===
             0 && (
             <p className="text-slate-500 text-sm p-4">
-              {secretView ? 'No secret chats. Turn on secret chat in a conversation\'s info page.' : 'No conversations yet. Open someone\'s profile and start a chat (DMs are tier-gated).'}
+              {secretView ? 'No secret chats. Start one from a conversation\'s info page.' : 'No conversations yet. Open someone\'s profile and start a chat (DMs are tier-gated).'}
             </p>
           )}
 
@@ -1980,7 +1981,7 @@ export default function Messages() {
               key={t.user.id}
               onClick={() =>
                 nav(
-                  `/messages/${t.user.handle}`
+                  `/messages/${t.user.handle}${t.secret ? '?secret=1' : ''}`
                 )
               }
               className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-white/5 text-left ${

@@ -673,7 +673,7 @@ export const api = {
     allow_save?: boolean,
     spoiler?: boolean
   ) =>
-    req(`/dms/${handle}`, {
+    req(`/dms/${handle}${dmQ()}`, {
       method: 'POST',
       body: j({
         media_url,
@@ -716,7 +716,7 @@ export const api = {
   dmThreads: () => req('/dms'),
 
   dmHistory: (h: string) =>
-    req(`/dms/${h}`),
+    req(`/dms/${h}${dmQ()}`),
 
   dmSecret: (h: string) => req(`/dms/${h}/secret`),
   nsfwStatus: () => req('/nsfw/status'),
@@ -732,7 +732,7 @@ export const api = {
     req(`/dms/${h}/secret`, { method: 'POST', body: j({ secret }) }),
 
   dmSend: (h: string, text: string, opts?: { silent?: boolean; scheduled_at?: string }) =>
-    req(`/dms/${h}`, {
+    req(`/dms/${h}${dmQ()}`, {
       method: 'POST',
       body: j({ text, silent: opts?.silent, scheduled_at: opts?.scheduled_at }),
     }),
@@ -1094,6 +1094,11 @@ export const api = {
     }),
 }
 
+// Secret chat is a second conversation with the same person; Messages sets this while one is open.
+let dmSecretScope = false
+export const setDmSecretScope = (on: boolean) => { dmSecretScope = on }
+const dmQ = () => (dmSecretScope ? '?secret=1' : '')
+
 export function wsDmUrl(handle: string, token: string) {
   let host = window.location.host
   let secure = window.location.protocol === 'https:'
@@ -1110,7 +1115,7 @@ export function wsDmUrl(handle: string, token: string) {
 
   const proto = secure ? 'wss' : 'ws'
 
-  return `${proto}://${host}/api/ws/dm/${handle}?token=${encodeURIComponent(token)}`
+  return `${proto}://${host}/api/ws/dm/${handle}?token=${encodeURIComponent(token)}${dmSecretScope ? '&secret=1' : ''}`
 }
 
 export function wsGroupUrl(id: string, token: string) {

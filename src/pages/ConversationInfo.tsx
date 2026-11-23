@@ -16,7 +16,8 @@ import {
   ExternalLink,
   X,
   Loader2,
-  ImageOff
+  ImageOff,
+  Lock
 } from 'lucide-react'
 
 export default function ConversationInfo() {
@@ -182,8 +183,12 @@ export default function ConversationInfo() {
 
           {handle && (
             <div className="bg-panel border border-edge rounded-2xl overflow-hidden [&>button]:border-t-0" data-testid="conversation-secret-section">
-              <SecretChatToggle handle={handle} />
-              <p className="px-4 pb-3 text-xs text-slate-500">Moves this chat to Secret chats, hides its last message in your list, and alerts only say "Someone sent you a message". Either of you can turn it off.</p>
+              <button onClick={() => nav(`/messages/${handle}?secret=1`)} data-testid="open-secret-chat"
+                className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-slate-100 hover:bg-white/5">
+                <Lock className="h-4 w-4 text-fuchsia-400" />
+                <span className="flex-1">Open secret chat</span>
+              </button>
+              <p className="px-4 pb-3 text-xs text-slate-500">A second, separate conversation with this person. It lives in Secret chats, never mixes with this chat, its media can't be saved, and alerts only say "Someone sent you a message".</p>
             </div>
           )}
 

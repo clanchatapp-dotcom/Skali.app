@@ -184,7 +184,7 @@ async function configureAndroidPush() {
     }
 
     await PushNotifications.addListener('registration', async (token) => {
-      api.registerPush(token.value, 'android').catch(() => {})
+      api.registerPush(token.value, Capacitor.getPlatform()).catch(() => {})
       void persistCallAuth()
     })
 
@@ -298,7 +298,8 @@ async function configureWebPush() {
 export async function configurePush() {
   const platform = Capacitor.getPlatform()
 
-  if (platform === 'android') {
+  if (platform === 'android' || platform === 'ios') {
+    // iOS shares the Capacitor flow; AppDelegate swaps the APNs token for an FCM token.
     await configureAndroidPush()
     return
   }

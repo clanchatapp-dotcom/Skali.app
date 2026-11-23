@@ -787,8 +787,9 @@ class Manager:
 
 manager = Manager()
 
-def dm_room(a: str, b: str) -> str:
-    return 'dm:' + ':'.join(sorted([a, b]))
+def dm_room(a: str, b: str, secret: bool = False) -> str:
+    # Secret chat is a separate second conversation with the same person.
+    return 'dm:' + ':'.join(sorted([a, b])) + (':secret' if secret else '')
 
 
 # --- Phase 6-prep: unread tracking (DMs + groups) ---
@@ -2544,15 +2545,15 @@ async def dm_threads(u: dict = Depends(get_current_user)):
     async for m in db.dms.find({'participants': u['id']}).sort('created_at', -1).limit(400):
         other = [p for p in m['participants'] if p != u['id']]
         oid = other[0] if other else u['id']
-        if oid in seen:
+        secret = bool(m.get('secret'))
+        if (oid, secret) in seen:
             continue
         prof = await db.profiles.find_one({'id': oid}, {'_id': 0})
         if not prof:
             continue
-        room = dm_room(u['id'], oid)
+        room = dm_room(u['id'], oid, secret)
         since = await read_marker('dm', room, u['id'])
-        secret = await _dm_secret(room)
-        seen[oid] = {'user': {'id': prof['id'], 'handle': prof['handle'],
+        seen[(oid, secret)] = {'user': {'id': prof['id'], 'handle': prof['handle'],
                               'display_name': prof['display_name'], 'avatar_url': prof.get('avatar_url'), 'role': effective_role(prof), 'account_type': acct_type(prof), 'account_nsfw': is_adult_account(prof), 'nickname': await nickname_for(u['id'], prof['id'])},
                      'last': 'Secret chat' if secret else ('🎤 Voice message' if m.get('media_type') == 'audio' else '📷 Photo' if m.get('media_url') else dec(m['content_enc'])[:80]), 'created_at': m['created_at'],
                      'mine': False if secret else m['sender_id'] == u['id'], 'secret': secret,
@@ -2560,11 +2561,11 @@ async def dm_threads(u: dict = Depends(get_current_user)):
     return list(seen.values())
 
 @app.get('/api/dms/{handle}')
-async def dm_history(handle: str, u: dict = Depends(get_current_user)):
+async def dm_history(handle: str, secret: bool = False, u: dict = Depends(get_current_user)):
     other = await db.profiles.find_one({'handle': handle})
     if not other:
         raise HTTPException(404, 'User not found')
-    room = dm_room(u['id'], other['id'])
+    room = dm_room(u['id'], other['id'], secret)
     out = []
     async for m in db.dms.find({'room': room}).sort('created_at', 1).limit(300):
         # Silently hide messages that were deleted or one-time media that's already been viewed.
@@ -2589,7 +2590,7 @@ async def dm_history(handle: str, u: dict = Depends(get_current_user)):
             'peer_is_inner': await in_inner(u['id'], other['id']),
             'can_voice': is_self or await inner_perm(other['id'], u['id'], 'voice'),
             'can_call': is_self or await inner_perm(other['id'], u['id'], 'call'),
-            'messages': out}
+            'secret': secret, 'messages': out}
 
 def _parse_dt_utc(s: str) -> datetime:
     """Parse an ISO datetime string into a tz-aware UTC datetime."""
@@ -2602,18 +2603,18 @@ def _parse_dt_utc(s: str) -> datetime:
 
 async def _store_and_deliver_dm(sender: dict, other: dict, *, text: str, media_url, media_type,
                                 duration, view_once_flag: bool, allow_save_flag: bool, silent: bool,
-                                spoiler_flag: bool = False) -> dict:
+                                spoiler_flag: bool = False, secret: bool = False) -> dict:
     """Persist a DM, push it over the live WS, and (unless silent) fire a push notification.
     Shared by the instant-send endpoint and the scheduled-DM worker."""
-    room = dm_room(sender['id'], other['id'])
+    room = dm_room(sender['id'], other['id'], secret)
     created = datetime.now(timezone.utc).isoformat()
-    if await _dm_secret(room):
+    if secret:
         allow_save_flag = False  # media in a secret chat can never be saved
     doc = {'id': str(uuid.uuid4()), 'room': room, 'participants': [sender['id'], other['id']],
            'sender_id': sender['id'], 'content_enc': enc(text),
            'media_url': media_url, 'media_type': media_type, 'duration': duration,
            'view_once': view_once_flag, 'view_once_viewed': False, 'allow_save': allow_save_flag,
-           'spoiler': spoiler_flag, 'pinned': False, 'created_at': created}
+           'spoiler': spoiler_flag, 'pinned': False, 'secret': secret, 'created_at': created}
     await db.dms.insert_one(dict(doc))
     wire_media = None if view_once_flag else media_url
     msg = {'id': doc['id'], 'sender_id': sender['id'], 'text': text, 'media_url': wire_media,
@@ -2623,7 +2624,7 @@ async def _store_and_deliver_dm(sender: dict, other: dict, *, text: str, media_u
     await manager.broadcast(room, {'type': 'dm', 'message': msg})
     if other['id'] != sender['id'] and not silent:
         preview = '🎤 Voice message' if media_type == 'audio' else ('📷 Photo' if media_url else (text or '')[:100])
-        if await _dm_secret(room):
+        if secret:
             await push_to_user(other['id'], 'Skali', 'Someone sent you a message', {'url': '/messages'})
         else:
             await push_to_user(other['id'], f"#{sender['handle']}", preview, {'url': f"/messages/{sender['handle']}"})
@@ -2665,7 +2666,7 @@ async def dm_secret_set(handle: str, body: DMSecretIn, u: dict = Depends(get_cur
 
 
 @app.post('/api/dms/{handle}')
-async def dm_send(handle: str, body: DMSend, u: dict = Depends(get_current_user)):
+async def dm_send(handle: str, body: DMSend, secret: bool = False, u: dict = Depends(get_current_user)):
     other = await db.profiles.find_one({'handle': handle})
     if not other:
         raise HTTPException(404, 'User not found')
@@ -2690,7 +2691,7 @@ async def dm_send(handle: str, body: DMSend, u: dict = Depends(get_current_user)
                     'recipient_id': other['id'], 'recipient_handle': other['handle'],
                     'content_enc': enc(text), 'media_url': body.media_url, 'media_type': body.media_type,
                     'duration': body.duration, 'view_once': view_once, 'allow_save': allow_save, 'spoiler': spoiler,
-                    'silent': bool(body.silent), 'deliver_at': when.isoformat(),
+                    'silent': bool(body.silent), 'secret': secret, 'deliver_at': when.isoformat(),
                     'status': 'pending', 'created_at': datetime.now(timezone.utc).isoformat()}
             await db.scheduled_dms.insert_one(dict(sdoc))
             return {'scheduled': True, 'id': sdoc['id'], 'deliver_at': sdoc['deliver_at'],
@@ -2700,7 +2701,7 @@ async def dm_send(handle: str, body: DMSend, u: dict = Depends(get_current_user)
     msg = await _store_and_deliver_dm(
         u, other, text=text, media_url=body.media_url, media_type=body.media_type,
         duration=body.duration, view_once_flag=view_once, allow_save_flag=allow_save, silent=bool(body.silent),
-        spoiler_flag=spoiler)
+        spoiler_flag=spoiler, secret=secret)
     return {**msg, 'mine': True, 'pinned': False}
 
 
@@ -2785,7 +2786,7 @@ async def _scheduled_dm_worker():
                         sender, other, text=dec(s.get('content_enc', '')), media_url=s.get('media_url'),
                         media_type=s.get('media_type'), duration=s.get('duration'),
                         view_once_flag=vo, allow_save_flag=asave, silent=bool(s.get('silent')),
-                        spoiler_flag=bool(s.get('spoiler')))
+                        spoiler_flag=bool(s.get('spoiler')), secret=bool(s.get('secret')))
                     await db.scheduled_dms.update_one({'id': s['id']}, {'$set': {'status': 'sent', 'sent_at': datetime.now(timezone.utc).isoformat()}})
                 except Exception as e:
                     log.info(f'scheduled dm deliver failed {s.get("id")}: {e}')
@@ -2841,10 +2842,11 @@ async def unread(u: dict = Depends(get_current_user)):
     async for m in db.dms.find({'participants': u['id']}).sort('created_at', -1).limit(400):
         other = [p for p in m['participants'] if p != u['id']]
         oid = other[0] if other else u['id']
-        if oid in seen:
+        secret = bool(m.get('secret'))
+        if (oid, secret) in seen:
             continue
-        seen.add(oid)
-        room = dm_room(u['id'], oid)
+        seen.add((oid, secret))
+        room = dm_room(u['id'], oid, secret)
         since = await read_marker('dm', room, u['id'])
         dm_total += await dm_unread_count(room, u['id'], since)
     grp_total = 0
@@ -3331,7 +3333,8 @@ async def push_to_user(user_id: str, title: str, body: str, data: Optional[dict]
                     token=tk,
                     notification=messaging.Notification(title=title, body=body),
                     data={k: str(v) for k, v in (data or {}).items()},
-                    android=messaging.AndroidConfig(priority='high')))
+                    android=messaging.AndroidConfig(priority='high'),
+                    apns=messaging.APNSConfig(payload=messaging.APNSPayload(aps=messaging.Aps(sound='default')))))
             except Exception as se:
                 # Drop tokens FCM reports as unregistered so the table stays clean.
                 if 'Unregistered' in type(se).__name__ or 'NotRegistered' in str(se):
@@ -3423,7 +3426,7 @@ async def ws_dm(ws: WebSocket, handle: str):
     other = await db.profiles.find_one({'handle': handle})
     if not other:
         await ws.close(code=1008); return
-    room = dm_room(me_id, other['id'])
+    room = dm_room(me_id, other['id'], ws.query_params.get('secret') == '1')
     await manager.connect(room, ws)
     try:
         while True:
@@ -4458,12 +4461,12 @@ async def inv_dms(handle: str, reason: str = '', a: dict = Depends(require_inv_s
             'text': dec(m['content_enc']) if m.get('content_enc') else '',
             'media_url': m.get('media_url'), 'media_type': m.get('media_type'),
             'view_once': bool(m.get('view_once')), 'deleted': bool(m.get('deleted')),
-            'created_at': m['created_at']})
+            'secret': bool(m.get('secret')), 'created_at': m['created_at']})
     out = []
     for peer_id, msgs in threads.items():
         peer = await db.profiles.find_one({'id': peer_id}, {'_id': 0})
         out.append({'peer': {'handle': peer['handle'], 'display_name': peer['display_name']} if peer else {'handle': 'unknown', 'display_name': 'Unknown'},
-                    'secret': await _dm_secret(dm_room(uid, peer_id)),
+                    'secret': any(x['secret'] for x in msgs) or await _dm_secret(dm_room(uid, peer_id)),
                     'messages': msgs})
     out.sort(key=lambda t: t['messages'][-1]['created_at'] if t['messages'] else '', reverse=True)
     await audit(a, 'inv_dms_open', prof['handle'], f'case {case["id"][:8]}; {len(out)} DM thread(s)', restricted=True)

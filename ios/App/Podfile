@@ -6,7 +6,7 @@ if ENV['GITHUB_ENV'] && (xcode = Dir['/Applications/Xcode_2[6-9]*.app'].max_by {
   puts "Using #{xcode} for the build"
 end
 
-platform :ios, '14.0'
+platform :ios, '15.0'
 use_frameworks!
 
 # workaround to avoid Xcode caching of Pods that requires

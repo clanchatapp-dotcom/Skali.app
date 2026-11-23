@@ -1,5 +1,11 @@
 require_relative '../../node_modules/@capacitor/ios/scripts/pods_helpers'
 
+# CI: App Store Connect needs the Xcode 26+ SDK; point the later build steps at the newest Xcode on the runner.
+if ENV['GITHUB_ENV'] && (xcode = Dir['/Applications/Xcode_2[6-9]*.app'].max_by { |p| Gem::Version.new(p[/Xcode_(\d+(?:\.\d+)*)/, 1]) rescue Gem::Version.new('0') })
+  File.open(ENV['GITHUB_ENV'], 'a') { |f| f.puts "DEVELOPER_DIR=#{xcode}/Contents/Developer" }
+  puts "Using #{xcode} for the build"
+end
+
 platform :ios, '14.0'
 use_frameworks!
 

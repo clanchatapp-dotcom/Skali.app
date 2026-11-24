@@ -3384,6 +3384,13 @@ async def push_call_ring_to_user(user_id: str,
                         ttl=45,
                         direct_boot_ok=True,
                     ),
+                    # iPhone: no custom ring service, so show a visible alert with sound.
+                    apns=messaging.APNSConfig(
+                        headers={'apns-priority': '10', 'apns-push-type': 'alert'},
+                        payload=messaging.APNSPayload(aps=messaging.Aps(
+                            alert=messaging.ApsAlert(title=f"Incoming {media or 'video'} call",
+                                                     body=f"{caller_name or caller_handle} is calling you"),
+                            sound='default'))),
                 ))
             except Exception as se:
                 if 'Unregistered' in type(se).__name__ or 'NotRegistered' in str(se):

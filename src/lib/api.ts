@@ -843,6 +843,9 @@ export const api = {
       body: j({ token, platform }),
     }),
 
+  pushClientError: (platform: string, error: string) =>
+    req('/push/client-error', { method: 'POST', body: j({ platform, error }) }),
+  pushTest: () => req('/push/test', { method: 'POST' }),
   unregisterPush: (token: string) =>
     req(`/push/register/${encodeURIComponent(token)}`, {
       method: 'DELETE',

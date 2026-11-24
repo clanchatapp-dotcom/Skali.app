@@ -180,6 +180,7 @@ async function configureAndroidPush() {
 
     if (permission.receive !== 'granted') {
       androidConfigured = false
+      api.pushClientError(Capacitor.getPlatform(), `permission ${permission.receive}`).catch(() => {})
       return
     }
 
@@ -188,7 +189,9 @@ async function configureAndroidPush() {
       void persistCallAuth()
     })
 
-    await PushNotifications.addListener('registrationError', () => {})
+    await PushNotifications.addListener('registrationError', (err: any) => {
+      api.pushClientError(Capacitor.getPlatform(), String(err?.error || err?.message || err)).catch(() => {})
+    })
 
     await PushNotifications.addListener(
       'pushNotificationReceived',

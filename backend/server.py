@@ -3410,7 +3410,43 @@ async def push_register(body: PushRegister, u: dict = Depends(get_current_user))
         {'user_id': u['id'], 'token': tok},
         {'$set': {'user_id': u['id'], 'token': tok, 'platform': body.platform or 'android', 'updated_at': now}},
         upsert=True)
+    await db.push_diag.delete_one({'user_id': u['id'], 'platform': body.platform or 'android'})
     return {'ok': True}
+
+
+class PushClientError(BaseModel):
+    platform: Optional[str] = None
+    error: str
+
+
+@app.post('/api/push/client-error')
+async def push_client_error(body: PushClientError, u: dict = Depends(get_current_user)):
+    """Device reports why it could not register for push (shown by the test button)."""
+    await db.push_diag.update_one({'user_id': u['id'], 'platform': body.platform or 'unknown'},
+                                  {'$set': {'error': body.error[:500], 'at': datetime.now(timezone.utc).isoformat()}}, upsert=True)
+    return {'ok': True}
+
+
+@app.post('/api/push/test')
+async def push_test(u: dict = Depends(get_current_user)):
+    """Send a test alert to each of my devices and report what Firebase said."""
+    devices = [d async for d in db.device_tokens.find({'user_id': u['id']}, {'_id': 0})]
+    diag = [d async for d in db.push_diag.find({'user_id': u['id']}, {'_id': 0, 'user_id': 0})]
+    if not _init_fcm():
+        return {'server_ready': False, 'device_errors': diag,
+                'devices': [{'platform': d.get('platform'), 'ok': None, 'updated_at': d.get('updated_at')} for d in devices]}
+    from firebase_admin import messaging
+    out = []
+    for d in devices:
+        try:
+            messaging.send(messaging.Message(
+                token=d['token'], notification=messaging.Notification(title='Skali', body='Test notification - push is working'),
+                android=messaging.AndroidConfig(priority='high'),
+                apns=messaging.APNSConfig(payload=messaging.APNSPayload(aps=messaging.Aps(sound='default')))))
+            out.append({'platform': d.get('platform'), 'ok': True, 'updated_at': d.get('updated_at')})
+        except Exception as e:
+            out.append({'platform': d.get('platform'), 'ok': False, 'error': f'{type(e).__name__}: {e}'[:300], 'updated_at': d.get('updated_at')})
+    return {'server_ready': True, 'devices': out, 'device_errors': diag}
 
 
 @app.delete('/api/push/register/{token}')

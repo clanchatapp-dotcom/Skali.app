@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import PushTestCard from '../components/PushTestCard'
 import { useNavigate } from 'react-router-dom'
 import { Settings as SettingsIcon, ShieldCheck, MessageCircle, LogOut, Trash2, Loader2, Check, Plus, User as UserIcon, AlertTriangle, Lock, Flame, Sparkles, MessageSquare, Swords, Pill, Eye, KeyRound, Bell, Users2, ChevronRight } from 'lucide-react'
 import { api } from '../lib/api'
@@ -404,6 +405,7 @@ export default function Settings() {
             </div>
           </section>
         )}
+        {tab === 'notifications' && <PushTestCard />}
 
         {/* ACCOUNT TAB */}
         {tab === 'account' && (

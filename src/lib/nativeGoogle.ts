@@ -16,7 +16,7 @@ const PUBLIC_GOOGLE_WEB_CLIENT_ID = '572913753788-il245hv6t2tss0bc097c4jfk4cumpi
 const WEB_CLIENT_ID = ((env.REACT_APP_GOOGLE_WEB_CLIENT_ID as string) || '').trim() || PUBLIC_GOOGLE_WEB_CLIENT_ID
 // iPhone uses its own iOS OAuth client (bundle app.skali.mobile). It lives in a different Google Cloud
 // project than the web client, so the ID token audience is this iOS client; Supabase must list it.
-const PUBLIC_GOOGLE_IOS_CLIENT_ID = '286762294730-rra0pps3gja241c5ci01jfi8cj09kg8j.apps.googleusercontent.com'
+const PUBLIC_GOOGLE_IOS_CLIENT_ID = '572913753788-0svt2oiefm73f52tqo3717fksfp630a9.apps.googleusercontent.com'
 const IOS_CLIENT_ID = ((env.REACT_APP_GOOGLE_IOS_CLIENT_ID as string) || '').trim() || PUBLIC_GOOGLE_IOS_CLIENT_ID
 
 export function isNative(): boolean {
